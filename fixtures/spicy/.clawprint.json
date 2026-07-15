@@ -1,0 +1,334 @@
+{
+  "version": "0.1.0",
+  "items": [
+    {
+      "id": "agents/release-bot",
+      "kind": "agent",
+      "files": {
+        ".claude/agents/release-bot.md": "66bb83bce47e6f73bc722a682768c2664d4b6a0485c027ada696ac0338ae9b52"
+      },
+      "itemHash": "290b693a78a1f48ae1da96003540aee990d26150ec48fd9e93cdb565907c6d7c",
+      "findings": [
+        {
+          "kind": "opaque",
+          "value": "base64(140) Y2xhd3ByaW50IGZp…",
+          "file": ".claude/agents/release-bot.md",
+          "line": 15
+        },
+        {
+          "kind": "opaque",
+          "value": "hex(64) deadbeefdeadbeef…",
+          "file": ".claude/agents/release-bot.md",
+          "line": 17
+        },
+        {
+          "kind": "opaque",
+          "value": "unicode U+200B (1×)",
+          "file": ".claude/agents/release-bot.md",
+          "line": 20
+        },
+        {
+          "kind": "tools",
+          "value": "Bash",
+          "file": ".claude/agents/release-bot.md",
+          "line": 5
+        },
+        {
+          "kind": "tools",
+          "value": "WebFetch",
+          "file": ".claude/agents/release-bot.md",
+          "line": 7
+        },
+        {
+          "kind": "tools",
+          "value": "Write",
+          "file": ".claude/agents/release-bot.md",
+          "line": 6
+        }
+      ]
+    },
+    {
+      "id": "claude-md",
+      "kind": "claude-md",
+      "files": {
+        "CLAUDE.md": "ded5ed5b6568205f9441070c8a29036226a8203b8afc6b20f8ef2e8d9c17396d"
+      },
+      "itemHash": "cca9afeb09cdf58ed04b8eaef389fc8830c91be16d9ec18d0ab81287f97e7801",
+      "findings": [
+        {
+          "kind": "commands",
+          "value": "curl",
+          "file": "CLAUDE.md",
+          "line": 11
+        },
+        {
+          "kind": "env",
+          "value": "WIKI_SYNC_TOKEN",
+          "file": "CLAUDE.md",
+          "line": 11
+        },
+        {
+          "kind": "network",
+          "value": "wiki.example-evil.test",
+          "file": "CLAUDE.md",
+          "line": 11,
+          "detail": "https://wiki.example-evil.test/api/sync"
+        }
+      ]
+    },
+    {
+      "id": "commands/deploy",
+      "kind": "command",
+      "files": {
+        ".claude/commands/deploy.md": "b577dc01c60155e82dcae593bcb4e06aa7464bc33004643be32f904039801729"
+      },
+      "itemHash": "f0ae17d0223a699875b5a3eab254938d0b6fd88d3a83ac982907aa9dd19436dc",
+      "findings": [
+        {
+          "kind": "commands",
+          "value": "cp",
+          "file": ".claude/commands/deploy.md",
+          "line": 10
+        },
+        {
+          "kind": "commands",
+          "value": "npm",
+          "file": ".claude/commands/deploy.md",
+          "line": 8
+        },
+        {
+          "kind": "commands",
+          "value": "scp",
+          "file": ".claude/commands/deploy.md",
+          "line": 9
+        },
+        {
+          "kind": "paths",
+          "value": "/var/log/team-deploys/latest.log",
+          "file": ".claude/commands/deploy.md",
+          "line": 10
+        }
+      ]
+    },
+    {
+      "id": "mcp",
+      "kind": "mcp",
+      "files": {
+        ".mcp.json": "13e8eaca0fd3518c701a39e6efc6edebbc8f01372c630876396ce8abef269863"
+      },
+      "itemHash": "c0d4484e25939ec86e0eb97fee837f36a8058170a6265486a6672e0c7ed13489",
+      "findings": [
+        {
+          "kind": "commands",
+          "value": "example-docs-mcp-server",
+          "file": ".mcp.json",
+          "line": 4
+        },
+        {
+          "kind": "commands",
+          "value": "npx",
+          "file": ".mcp.json",
+          "line": 4
+        },
+        {
+          "kind": "network",
+          "value": "mcp.example-evil.test",
+          "file": ".mcp.json",
+          "line": 7,
+          "detail": "https://mcp.example-evil.test/index"
+        },
+        {
+          "kind": "network",
+          "value": "sse.example-evil.test",
+          "file": ".mcp.json",
+          "line": 12,
+          "detail": "https://sse.example-evil.test/stream"
+        }
+      ]
+    },
+    {
+      "id": "settings",
+      "kind": "settings",
+      "files": {
+        ".claude/settings.json": "0d2924d4108d8043acbc4e1c1048499a09f27f3155ef86eca1f3e517f9e88a59"
+      },
+      "itemHash": "c777d61a30a4a271574b8b76d747683f6f75fe037942af89bea3b401afb6af12",
+      "findings": [
+        {
+          "kind": "commands",
+          "value": "node",
+          "file": ".claude/settings.json",
+          "line": 19
+        },
+        {
+          "kind": "commands",
+          "value": "powershell",
+          "file": ".claude/settings.json",
+          "line": 9
+        },
+        {
+          "kind": "env",
+          "value": "SESSION_LOG",
+          "file": ".claude/settings.json",
+          "line": 19
+        },
+        {
+          "kind": "network",
+          "value": "hooks.example-evil.test",
+          "file": ".claude/settings.json",
+          "line": 9,
+          "detail": "https://hooks.example-evil.test/notify"
+        }
+      ]
+    },
+    {
+      "id": "skills/pdf-helper",
+      "kind": "skill",
+      "files": {
+        ".claude/skills/pdf-helper/SKILL.md": "56a2fe57d518cc64243fc6d3c77a915898e12b024ec6e9b7ff45a21dcdab6f33",
+        ".claude/skills/pdf-helper/scripts/convert.mjs": "ca1dc1deea38d1a2d49598602984db3591b1383bafe44f9175c56960bbdaedbb",
+        ".claude/skills/pdf-helper/scripts/sync.py": "a5ec6a5d1c739db4b91223da85e19945c79d4d8b3347064a8b2f729c58671416"
+      },
+      "itemHash": "fa88551512a8c67c20cdfb449bbb3f7b1b9e78a83435f040397257d7eafa3bd9",
+      "findings": [
+        {
+          "kind": "commands",
+          "value": "curl",
+          "file": ".claude/skills/pdf-helper/scripts/sync.py",
+          "line": 9
+        },
+        {
+          "kind": "commands",
+          "value": "curl",
+          "file": ".claude/skills/pdf-helper/SKILL.md",
+          "line": 17
+        },
+        {
+          "kind": "commands",
+          "value": "echo",
+          "file": ".claude/skills/pdf-helper/SKILL.md",
+          "line": 18
+        },
+        {
+          "kind": "commands",
+          "value": "node",
+          "file": ".claude/skills/pdf-helper/SKILL.md",
+          "line": 16
+        },
+        {
+          "kind": "commands",
+          "value": "rsync",
+          "file": ".claude/skills/pdf-helper/scripts/sync.py",
+          "line": 8
+        },
+        {
+          "kind": "commands",
+          "value": "wget",
+          "file": ".claude/skills/pdf-helper/scripts/convert.mjs",
+          "line": 9
+        },
+        {
+          "kind": "env",
+          "value": "PDF_LICENSE_KEY",
+          "file": ".claude/skills/pdf-helper/scripts/convert.mjs",
+          "line": 6
+        },
+        {
+          "kind": "env",
+          "value": "PDF_LICENSE_KEY",
+          "file": ".claude/skills/pdf-helper/SKILL.md",
+          "line": 17
+        },
+        {
+          "kind": "env",
+          "value": "PDF_MIRROR_HOST",
+          "file": ".claude/skills/pdf-helper/scripts/convert.mjs",
+          "line": 7
+        },
+        {
+          "kind": "env",
+          "value": "PDF_SYNC_REGION",
+          "file": ".claude/skills/pdf-helper/scripts/sync.py",
+          "line": 6
+        },
+        {
+          "kind": "env",
+          "value": "PDF_SYNC_TOKEN",
+          "file": ".claude/skills/pdf-helper/scripts/sync.py",
+          "line": 5
+        },
+        {
+          "kind": "network",
+          "value": "203.0.113.42",
+          "file": ".claude/skills/pdf-helper/SKILL.md",
+          "line": 23,
+          "detail": "203.0.113.42"
+        },
+        {
+          "kind": "network",
+          "value": "203.0.113.7",
+          "file": ".claude/skills/pdf-helper/scripts/convert.mjs",
+          "line": 9,
+          "detail": "http://203.0.113.7/tools/pdftotext.bin"
+        },
+        {
+          "kind": "network",
+          "value": "api.example-evil.test",
+          "file": ".claude/skills/pdf-helper/SKILL.md",
+          "line": 17,
+          "detail": "https://api.example-evil.test/v1/telemetry"
+        },
+        {
+          "kind": "network",
+          "value": "cdn.example-evil.test",
+          "file": ".claude/skills/pdf-helper/scripts/convert.mjs",
+          "line": 10,
+          "detail": "https://cdn.example-evil.test/fonts.tar.gz?k=${key}"
+        },
+        {
+          "kind": "network",
+          "value": "sync.example-evil.test",
+          "file": ".claude/skills/pdf-helper/scripts/sync.py",
+          "line": 9,
+          "detail": "https://sync.example-evil.test/ping"
+        },
+        {
+          "kind": "paths",
+          "value": "/tmp/pdf-helper-cache.bin",
+          "file": ".claude/skills/pdf-helper/scripts/convert.mjs",
+          "line": 12
+        },
+        {
+          "kind": "paths",
+          "value": "/var/tmp/pdf-sync-state.json",
+          "file": ".claude/skills/pdf-helper/scripts/sync.py",
+          "line": 11
+        },
+        {
+          "kind": "paths",
+          "value": "~/.cache/pdf-helper-license.txt",
+          "file": ".claude/skills/pdf-helper/SKILL.md",
+          "line": 18
+        },
+        {
+          "kind": "tools",
+          "value": "Bash",
+          "file": ".claude/skills/pdf-helper/SKILL.md",
+          "line": 4
+        },
+        {
+          "kind": "tools",
+          "value": "Read",
+          "file": ".claude/skills/pdf-helper/SKILL.md",
+          "line": 4
+        },
+        {
+          "kind": "tools",
+          "value": "WebFetch",
+          "file": ".claude/skills/pdf-helper/SKILL.md",
+          "line": 4
+        }
+      ]
+    }
+  ]
+}

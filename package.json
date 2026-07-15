@@ -1,0 +1,46 @@
+{
+  "name": "clawprint",
+  "version": "0.1.0",
+  "description": "The capability manifest for your .claude/ directory. Know exactly what your agent setup can do, and catch every change in PR review. Deterministic, zero-dependency, no AI, no verdicts.",
+  "type": "module",
+  "bin": {
+    "clawprint": "./clawprint.mjs"
+  },
+  "main": "./clawprint.mjs",
+  "exports": "./clawprint.mjs",
+  "files": [
+    "clawprint.mjs",
+    "action.yml",
+    "README.md",
+    "SECURITY.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test",
+    "selftest": "node clawprint.mjs --selftest"
+  },
+  "keywords": [
+    "claude-code",
+    "agent-security",
+    "supply-chain",
+    "ai-agents",
+    "capability-manifest",
+    "skills",
+    "mcp",
+    "manifest",
+    "diff"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vanara-agents/clawprint.git"
+  },
+  "bugs": {
+    "url": "https://github.com/vanara-agents/clawprint/issues"
+  },
+  "homepage": "https://github.com/vanara-agents/clawprint#readme",
+  "author": "Vanara (https://vanaraagents.com)",
+  "license": "Apache-2.0"
+}

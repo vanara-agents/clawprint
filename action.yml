@@ -1,0 +1,36 @@
+name: 'clawprint check'
+description: >-
+  Fail the PR when the agent config (.claude/, .mcp.json, CLAUDE.md) gains a
+  capability — a new network host, shell command, env var, tool grant, outside
+  write or opaque block — that isn't reflected in the committed clawprint
+  manifest. Deterministic, offline, zero dependencies, no AI.
+author: 'Vanara'
+branding:
+  icon: 'shield'
+  color: 'orange'
+
+inputs:
+  dir:
+    description: 'Project root to scan (contains .claude/ and the committed manifest).'
+    required: false
+    default: '.'
+  allow-content-drift:
+    description: 'If "true", content-only changes (same capabilities, different bytes) are a note instead of a failure.'
+    required: false
+    default: 'false'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: clawprint selftest
+      shell: bash
+      run: node "${{ github.action_path }}/clawprint.mjs" --selftest
+
+    - name: clawprint check
+      shell: bash
+      run: |
+        ARGS=(check --dir "${{ inputs.dir }}")
+        if [ "${{ inputs.allow-content-drift }}" = "true" ]; then
+          ARGS+=(--allow-content-drift)
+        fi
+        node "${{ github.action_path }}/clawprint.mjs" "${ARGS[@]}"

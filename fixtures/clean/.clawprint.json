@@ -1,0 +1,89 @@
+{
+  "version": "0.1.0",
+  "items": [
+    {
+      "id": "agents/reviewer",
+      "kind": "agent",
+      "files": {
+        ".claude/agents/reviewer.md": "cf3eb20e146fbc4ec2ad4ef1b0dcff1ce6afebe62711dead191ba5822557996f"
+      },
+      "itemHash": "fd80a6db505af3c1b3a3984d87a6266a14d54e06723c8e7cb1d0049e53f857d3",
+      "findings": [
+        {
+          "kind": "tools",
+          "value": "Glob",
+          "file": ".claude/agents/reviewer.md",
+          "line": 4
+        },
+        {
+          "kind": "tools",
+          "value": "Grep",
+          "file": ".claude/agents/reviewer.md",
+          "line": 4
+        },
+        {
+          "kind": "tools",
+          "value": "Read",
+          "file": ".claude/agents/reviewer.md",
+          "line": 4
+        }
+      ]
+    },
+    {
+      "id": "settings",
+      "kind": "settings",
+      "files": {
+        ".claude/settings.json": "b657c74f9e066d4017341fb41563e50ec829430a602f3e59ee500ab55d1377f8"
+      },
+      "itemHash": "f6b2d4620159dd5cb4fa55e628124776027fa8fabad1f5864517aeaaaa142188",
+      "findings": [
+        {
+          "kind": "commands",
+          "value": "npm",
+          "file": ".claude/settings.json",
+          "line": 9
+        }
+      ]
+    },
+    {
+      "id": "skills/changelog-writer",
+      "kind": "skill",
+      "files": {
+        ".claude/skills/changelog-writer/SKILL.md": "89c22c2966df05187c7ab9190d7e4499511436df0f68b2eb901be232cf0f9070",
+        ".claude/skills/changelog-writer/scripts/draft.mjs": "53d80a97a2bd67aa48e9b2019999f0f6dd000a23d39b4918710fada9832ca9fb"
+      },
+      "itemHash": "a5b8ceb23d55177ebc7f62463d0c725416392f2924e49e85592afda9d7a1ae31",
+      "findings": [
+        {
+          "kind": "commands",
+          "value": "git",
+          "file": ".claude/skills/changelog-writer/SKILL.md",
+          "line": 13
+        },
+        {
+          "kind": "commands",
+          "value": "node",
+          "file": ".claude/skills/changelog-writer/SKILL.md",
+          "line": 14
+        }
+      ]
+    },
+    {
+      "id": "skills/hello-docs",
+      "kind": "skill",
+      "files": {
+        ".claude/skills/hello-docs/SKILL.md": "bf8da1ad4b56627a360a13db16adde4f525f487806e224e45c9bc628deebca55",
+        ".claude/skills/hello-docs/scripts/summarize.mjs": "2fc9afd0e66f1bb172888743a3bc78a606831e33de36dfdec9ef49d6e5f60599"
+      },
+      "itemHash": "f36ec5780848f19eb0677e7e97cb301e90e2c86bdc3b886b06ab29fdb21559f2",
+      "findings": [
+        {
+          "kind": "commands",
+          "value": "node",
+          "file": ".claude/skills/hello-docs/SKILL.md",
+          "line": 14
+        }
+      ]
+    }
+  ]
+}
