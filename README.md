@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/hero.svg" alt="clawprint — know what your agent setup can do, and catch every change in review" width="900">
+<img src="docs/assets/hero.svg" alt="clawprint — a clawprint check run failing a pull request that quietly added a new network host to a skill" width="900">
 
 [![CI](https://github.com/vanara-agents/clawprint/actions/workflows/ci.yml/badge.svg)](https://github.com/vanara-agents/clawprint/actions/workflows/ci.yml)
 &nbsp;·&nbsp; one file &nbsp;·&nbsp; zero dependencies &nbsp;·&nbsp; Node ≥ 20 &nbsp;·&nbsp; Apache-2.0
@@ -258,6 +258,17 @@ in **[docs/recipes.md](docs/recipes.md)**.
   default — the instructions changed even if capabilities didn't, and a reviewer
   should glance. `--allow-content-drift` downgrades this to a note.
 - **No manifest committed yet** → exit 1 with instructions.
+
+## In your editor (VS Code)
+
+Prefer a panel to a terminal? The **clawprint** sidebar shows the same picture
+live for the open workspace — **Capabilities**, **Context Weight**
+(`weigh --global`, so both the project and your `~/.claude` tiers), and the
+**Manifest Check** diff — and refreshes as you edit `.claude/`. It runs the
+same `clawprint` CLI under the hood, so the numbers match your CI exactly.
+
+The extension lives in [`vscode/`](vscode): `npm run package` there builds a
+`.vsix` you can install, or press F5 to launch the Extension Development Host.
 
 ## Determinism
 
