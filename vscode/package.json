@@ -29,6 +29,7 @@
     },
     "views": {
       "clawprint": [
+        { "id": "clawprint.session", "name": "Token Usage" },
         { "id": "clawprint.capabilities", "name": "Capabilities" },
         { "id": "clawprint.weigh", "name": "Context Weight" },
         { "id": "clawprint.check", "name": "Manifest Check" }
@@ -66,7 +67,7 @@
         "clawprint.budget": {
           "type": "number",
           "default": 0,
-          "description": "Always-loaded token budget shown in the status bar (0 = no budget)."
+          "description": "Per-session token budget (global + project) shown in the status bar (0 = no budget)."
         }
       }
     }

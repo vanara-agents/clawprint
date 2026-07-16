@@ -26,6 +26,7 @@
 
 import { readFileSync, writeFileSync, readdirSync, statSync, existsSync, realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
@@ -786,14 +787,18 @@ function walkFiles(dir) {
  * [{id, kind, files: [{path (posix, root-relative), content (Buffer)}]}].
  * Missing directories are fine — they just produce no items.
  */
-export function discoverItems(root) {
+export function discoverItems(root, { configDir = '.claude' } = {}) {
+  // configDir is where skills/agents/commands/settings live under `root`.
+  // Project scope: '.claude' (skills at <root>/.claude/skills). Global scope:
+  // '.' (skills at ~/.claude/skills, with root = ~/.claude). CLAUDE.md and the
+  // other-ecosystem files are always relative to `root` itself in both layouts.
   root = resolve(root); // rel() slices by root.length — an unresolved root would corrupt paths
   const items = [];
   const rel = (abs) => toPosix(abs.slice(root.length + 1));
   const readAll = (paths) => paths.map((p) => ({ path: rel(p), content: readFileSync(p) }));
 
   for (const [dirName, kind] of [['skills', 'skill'], ['agents', 'agent'], ['commands', 'command']]) {
-    const base = join(root, '.claude', dirName);
+    const base = join(root, configDir, dirName);
     if (!existsSync(base)) continue;
     for (const entry of readdirSync(base, { withFileTypes: true }).sort((a, b) => codepointCompare(a.name, b.name))) {
       const full = join(base, entry.name);
@@ -810,7 +815,7 @@ export function discoverItems(root) {
   }
 
   const settingsFiles = ['settings.json', 'settings.local.json']
-    .map((f) => join(root, '.claude', f))
+    .map((f) => join(root, configDir, f))
     .filter((p) => existsSync(p) && statSync(p).isFile());
   if (settingsFiles.length) items.push({ id: 'settings', kind: 'settings', files: readAll(settingsFiles) });
 
@@ -1252,6 +1257,48 @@ export function buildWeighReport(items) {
 
 export const weighDir = (root) => buildWeighReport(discoverItems(root));
 
+/** The user's global Claude config dir (~/.claude), scanned with the '.' layout. */
+export const globalClaudeDir = () => join(homedir(), '.claude');
+
+/**
+ * Attach the global tier and per-session totals to a project weigh report.
+ * Global = ~/.claude/CLAUDE.md + global skill/agent/command descriptions, i.e.
+ * the config Claude Code loads into *every* session regardless of project.
+ * Per-session total = global always-loaded + project always-loaded.
+ *
+ * What this deliberately does NOT count: plugin- or hook-injected context
+ * (e.g. a SessionStart hook that emits rules at runtime) and MCP tool schemas.
+ * Those are chosen at runtime and cannot be attributed by a static scan — the
+ * report flags them as not-measurable rather than guessing a number.
+ */
+export function attachSessionTotals(report, projectDir, homeDir = globalClaudeDir()) {
+  // Guard against double counting when the scanned project IS ~/.claude itself.
+  const scanningHome = resolve(projectDir) === resolve(homeDir)
+    || resolve(join(projectDir, '.claude')) === resolve(homeDir);
+  const global = existsSync(homeDir) && !scanningHome
+    ? buildWeighReport(discoverItems(homeDir, { configDir: '.' }))
+    : buildWeighReport([]);
+
+  report.global = {
+    dir: homeDir,
+    always: global.always,
+    invoke: { items: global.invoke.items, chars: global.invoke.chars, tokens: global.invoke.tokens },
+    notes: global.notes,
+  };
+  const globalChars = global.always.chars;
+  const projectChars = report.always.chars;
+  report.session = {
+    globalAlwaysChars: globalChars,
+    globalAlwaysTokens: global.always.tokens,
+    projectAlwaysChars: projectChars,
+    projectAlwaysTokens: report.always.tokens,
+    // total tokens derives from summed exact chars (not summed rounded tokens)
+    totalChars: globalChars + projectChars,
+    totalTokens: estimateTokens(globalChars + projectChars),
+  };
+  return report;
+}
+
 export function renderWeighJson(report) {
   return `${JSON.stringify(report, null, 2)}\n`;
 }
@@ -1282,6 +1329,13 @@ export function renderWeigh(report, { top = 5 } = {}) {
   heavies(report.reference, 'REFERENCED FILES — read only if the item uses them', 'items');
   heavies(report.other, 'OTHER ECOSYSTEMS — always loaded by their own tool', 'files');
 
+  if (report.global) {
+    lines.push('GLOBAL — every session in every project (~/.claude)');
+    if (report.global.always.entries.length === 0) lines.push('  (nothing found)');
+    for (const e of report.global.always.entries) lines.push(padRow(e.label, e.chars, e.tokens));
+    lines.push(padRow('total', report.global.always.chars, report.global.always.tokens), '');
+  }
+
   lines.push('NOT MEASURABLE OFFLINE');
   lines.push(report.notes.mcpFiles > 0
     ? `  MCP config: ${report.notes.mcpServers} server(s) — tool schemas load at runtime from the servers`
@@ -1291,15 +1345,32 @@ export function renderWeigh(report, { top = 5 } = {}) {
     lines.push('', `NO DESCRIPTION (loads nothing into the listing; the item may be hard to trigger)`);
     for (const id of report.notes.missingDescriptions) lines.push(`  ${id}`);
   }
+
+  if (report.session) {
+    const s = report.session;
+    lines.push('', 'TOKEN USAGE — total context every session starts with');
+    lines.push(padRow('global (~/.claude)', s.globalAlwaysChars, s.globalAlwaysTokens));
+    lines.push(padRow('project (this repo)', s.projectAlwaysChars, s.projectAlwaysTokens));
+    lines.push(padRow('per session (total)', s.totalChars, s.totalTokens));
+    lines.push('  note: SessionStart hooks and MCP servers can inject more context at runtime — not measurable offline.');
+    lines.push('', `~${fmt(s.totalTokens)} tokens ride along with every session (global + this project).`);
+    return `${lines.join('\n')}\n`;
+  }
+
   lines.push('', `~${fmt(report.always.tokens)} tokens ride along with every session in this project.`);
   return `${lines.join('\n')}\n`;
 }
 
 export function renderWeighBrief(report, { budget = null } = {}) {
-  const base = `clawprint weigh: ~${fmt(report.always.tokens)} tokens always loaded `
-    + `(${fmt(report.always.chars)} chars; ${fmt(report.invoke.items.length)} items on invoke)`;
+  const gate = report.session ? report.session.totalTokens : report.always.tokens;
+  const base = report.session
+    ? `clawprint weigh: ~${fmt(gate)} tokens/session `
+      + `(global ~${fmt(report.session.globalAlwaysTokens)} + project ~${fmt(report.session.projectAlwaysTokens)}; `
+      + `${fmt(report.invoke.items.length)} items on invoke)`
+    : `clawprint weigh: ~${fmt(report.always.tokens)} tokens always loaded `
+      + `(${fmt(report.always.chars)} chars; ${fmt(report.invoke.items.length)} items on invoke)`;
   if (budget === null) return `${base}\n`;
-  const over = report.always.tokens > budget;
+  const over = gate > budget;
   return `${base} — budget ${fmt(budget)}: ${over ? 'EXCEEDED' : 'OK'}\n`;
 }
 
@@ -1438,14 +1509,15 @@ Usage:
 Flags:
   --allow-content-drift          in check mode: content-only changes are a note, not a failure
   --top <n>                      in weigh mode: heaviest items to list per tier (default 5)
-  --budget <n>                   in weigh mode: exit 1 if always-loaded estimate exceeds n tokens
+  --budget <n>                   in weigh mode: exit 1 if the always-loaded estimate exceeds n tokens
+  --global                       in weigh mode: also weigh ~/.claude and show total tokens per session
   --brief                        in weigh mode: one-line output (for SessionStart hooks)
   --version                      print version
   --help                         print this help
 `;
 
 function parseArgs(argv) {
-  const opts = { mode: 'scan', dir: process.cwd(), json: false, sarif: false, selftest: false, allowContentDrift: false, help: false, version: false, top: 5, budget: null, brief: false };
+  const opts = { mode: 'scan', dir: process.cwd(), json: false, sarif: false, selftest: false, allowContentDrift: false, help: false, version: false, top: 5, budget: null, brief: false, global: false };
   const intArg = (argv, i, flag) => {
     const v = Number.parseInt(argv[i], 10);
     if (!Number.isInteger(v) || v < 0 || String(v) !== argv[i]) throw new Error(`${flag} requires a non-negative integer`);
@@ -1457,6 +1529,7 @@ function parseArgs(argv) {
     else if (a === 'weigh') opts.mode = 'weigh';
     else if (a === '--top') { i++; opts.top = intArg(argv, i, '--top'); }
     else if (a === '--budget') { i++; opts.budget = intArg(argv, i, '--budget'); }
+    else if (a === '--global') opts.global = true;
     else if (a === '--brief') opts.brief = true;
     else if (a === '--dir') {
       i++;
@@ -1500,8 +1573,8 @@ export function main(argv = process.argv.slice(2)) {
     process.stderr.write('clawprint: --sarif is a scan-mode output; it is not supported with check or weigh\n');
     return 2;
   }
-  if ((opts.brief || opts.budget !== null) && opts.mode !== 'weigh') {
-    process.stderr.write('clawprint: --brief and --budget only apply to weigh mode\n');
+  if ((opts.brief || opts.budget !== null || opts.global) && opts.mode !== 'weigh') {
+    process.stderr.write('clawprint: --brief, --budget and --global only apply to weigh mode\n');
     return 2;
   }
 
@@ -1512,16 +1585,20 @@ export function main(argv = process.argv.slice(2)) {
 
   if (opts.mode === 'weigh') {
     const weighReport = weighDir(opts.dir);
+    if (opts.global) attachSessionTotals(weighReport, opts.dir);
+    // With --global the budget gates the whole per-session total; otherwise the
+    // project's always-loaded estimate, matching the pre-global behavior.
+    const gate = weighReport.session ? weighReport.session.totalTokens : weighReport.always.tokens;
     if (opts.json) process.stdout.write(renderWeighJson(weighReport));
     else if (opts.brief) process.stdout.write(renderWeighBrief(weighReport, { budget: opts.budget }));
     else {
       process.stdout.write(renderWeigh(weighReport, { top: opts.top }));
       if (opts.budget !== null) {
-        const over = weighReport.always.tokens > opts.budget;
-        process.stdout.write(`\nbudget ${fmt(opts.budget)} tokens (always-loaded): ${over ? 'EXCEEDED' : 'OK'}\n`);
+        const scope = weighReport.session ? 'per session' : 'always-loaded';
+        process.stdout.write(`\nbudget ${fmt(opts.budget)} tokens (${scope}): ${gate > opts.budget ? 'EXCEEDED' : 'OK'}\n`);
       }
     }
-    return opts.budget !== null && weighReport.always.tokens > opts.budget ? 1 : 0;
+    return opts.budget !== null && gate > opts.budget ? 1 : 0;
   }
 
   const report = scanDir(opts.dir);
