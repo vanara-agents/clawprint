@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+  <!-- paw pad -->
+  <path d="M12 20.5c-2.6 0-4.7-1.5-4.7-3.4 0-1.2.9-2.2 1.9-3 .9-.8 1.6-1.7 2.8-1.7s1.9.9 2.8 1.7c1 .8 1.9 1.8 1.9 3 0 1.9-2.1 3.4-4.7 3.4z"/>
+  <!-- toes -->
+  <ellipse cx="5.2" cy="10.4" rx="1.7" ry="2.3" transform="rotate(-20 5.2 10.4)"/>
+  <ellipse cx="9.4" cy="6.9" rx="1.7" ry="2.4" transform="rotate(-8 9.4 6.9)"/>
+  <ellipse cx="14.6" cy="6.9" rx="1.7" ry="2.4" transform="rotate(8 14.6 6.9)"/>
+  <ellipse cx="18.8" cy="10.4" rx="1.7" ry="2.3" transform="rotate(20 18.8 10.4)"/>
+</svg>

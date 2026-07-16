@@ -1,0 +1,78 @@
+{
+  "name": "clawprint-vscode",
+  "displayName": "Clawprint",
+  "description": "The capability manifest for your .claude/ directory, in your sidebar — what your agent setup can do, what it costs in context, and what changed.",
+  "version": "0.1.0",
+  "publisher": "vanara-agents",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vanara-agents/clawprint.git",
+    "directory": "vscode"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other", "Linters"],
+  "keywords": ["claude-code", "ai-agents", "mcp", "capability-manifest", "context"],
+  "main": "./extension.js",
+  "activationEvents": ["onStartupFinished"],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "clawprint",
+          "title": "Clawprint",
+          "icon": "media/claw.svg"
+        }
+      ]
+    },
+    "views": {
+      "clawprint": [
+        { "id": "clawprint.capabilities", "name": "Capabilities" },
+        { "id": "clawprint.weigh", "name": "Context Weight" },
+        { "id": "clawprint.check", "name": "Manifest Check" }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "clawprint.capabilities",
+        "contents": "No agent config found in this workspace.\nClawprint scans .claude/ (skills, agents, commands, settings), .mcp.json, CLAUDE.md and other agent-config files.\n[Learn more](https://github.com/vanara-agents/clawprint)"
+      },
+      {
+        "view": "clawprint.check",
+        "contents": "No committed manifest yet.\nWrite one to enable change tracking:\n[Write CLAWPRINT.md + .clawprint.json](command:clawprint.scanWrite)\nCommit both files; from then on this view diffs your working tree against them."
+      }
+    ],
+    "commands": [
+      { "command": "clawprint.refresh", "title": "Clawprint: Refresh", "icon": "$(refresh)" },
+      { "command": "clawprint.scanWrite", "title": "Clawprint: Write Manifest (CLAWPRINT.md + .clawprint.json)", "icon": "$(save)" },
+      { "command": "clawprint.openManifest", "title": "Clawprint: Open CLAWPRINT.md" }
+    ],
+    "menus": {
+      "view/title": [
+        { "command": "clawprint.refresh", "when": "view =~ /^clawprint\\./", "group": "navigation@1" },
+        { "command": "clawprint.scanWrite", "when": "view == clawprint.check", "group": "navigation@2" }
+      ]
+    },
+    "configuration": {
+      "title": "Clawprint",
+      "properties": {
+        "clawprint.cliPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to clawprint.mjs. Empty = auto: workspace node_modules/clawprint, then the copy bundled with this extension."
+        },
+        "clawprint.budget": {
+          "type": "number",
+          "default": 0,
+          "description": "Always-loaded token budget shown in the status bar (0 = no budget)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vendor": "node -e \"require('fs').copyFileSync('../clawprint.mjs','vendor/clawprint.mjs')\"",
+    "package": "npm run vendor && npx --yes @vscode/vsce package"
+  }
+}
