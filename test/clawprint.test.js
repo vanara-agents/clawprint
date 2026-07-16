@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cpSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync, appendFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync, appendFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import {
   buildReport, scanDir, discoverItems, renderJson, renderMarkdown, renderSarif,
   compareReports, extractFences, EXTRACTORS, selftest,
+  buildWeighReport, frontmatterDescription,
   MANIFEST_JSON, MANIFEST_MD, VERSION,
 } from '../clawprint.mjs';
 
@@ -631,4 +632,60 @@ test('discovery: relative --dir root produces correct relative paths', () => {
   // the .claude items must still carry their .claude/ prefix intact
   const skill = items.find((i) => i.id === 'skills/hello-docs');
   assert.ok(skill && skill.files.some((f) => f.path.startsWith('.claude/skills/hello-docs/')), 'prefix intact');
+});
+
+// ---------------------------------------------------------------------------
+// weigh — context-cost inventory (docs/WEIGH-SPEC.md)
+// ---------------------------------------------------------------------------
+
+test('weigh: exact char accounting against fixtures/spicy', () => {
+  const w = buildWeighReport(discoverItems(SPICY));
+  const skillMd = readFileSync(join(SPICY, '.claude', 'skills', 'pdf-helper', 'SKILL.md'), 'utf8')
+    .replace(/^﻿/, '').replace(/\r\n?/g, '\n');
+  const invoke = w.invoke.items.find((i) => i.id === 'skills/pdf-helper');
+  assert.ok(invoke, 'skill appears in invoke tier');
+  assert.equal(invoke.chars, skillMd.length, 'invoke chars = exact normalized primary-file chars');
+  const claudeMd = w.always.entries.find((e) => e.group === 'claude-md');
+  assert.ok(claudeMd && claudeMd.chars > 0, 'CLAUDE.md counted in always tier');
+  assert.equal(w.always.chars, w.always.entries.reduce((n, e) => n + e.chars, 0), 'always total is the sum');
+  assert.equal(w.always.tokens, Math.round(w.always.chars / 4), 'tokens = chars/4, rounded');
+});
+
+test('weigh CLI: writes nothing, deterministic output, --json shape', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'clawprint-test-'));
+  try {
+    cpSync(SPICY, dir, { recursive: true });
+    rmSync(join(dir, MANIFEST_JSON), { force: true });
+    rmSync(join(dir, MANIFEST_MD), { force: true });
+    const a = runCli(['weigh', '--dir', dir]);
+    const b = runCli(['weigh', '--dir', dir]);
+    assert.equal(a.status, 0);
+    assert.equal(a.stdout, b.stdout, 'byte-identical across runs');
+    assert.ok(!existsSync(join(dir, MANIFEST_JSON)), 'weigh must not write the manifest');
+    const j = JSON.parse(runCli(['weigh', '--dir', dir, '--json']).stdout);
+    assert.equal(j.tokenEstimate, 'chars/4');
+    assert.ok(Array.isArray(j.invoke.items) && j.invoke.items.length >= 3);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('weigh CLI: --budget gates on the always tier, --brief is one line', () => {
+  const under = runCli(['weigh', '--dir', SPICY, '--budget', '999999']);
+  assert.equal(under.status, 0);
+  assert.match(under.stdout, /budget 999,999 tokens \(always-loaded\): OK/);
+  const over = runCli(['weigh', '--dir', SPICY, '--budget', '1']);
+  assert.equal(over.status, 1);
+  assert.match(over.stdout, /EXCEEDED/);
+  const brief = runCli(['weigh', '--dir', SPICY, '--brief', '--budget', '999999']);
+  assert.equal(brief.status, 0);
+  assert.equal(brief.stdout.trim().split('\n').length, 1, 'brief is a single line');
+  assert.match(brief.stdout, /^clawprint weigh: ~[\d,]+ tokens always loaded/);
+});
+
+test('weigh CLI: flag validation', () => {
+  assert.equal(runCli(['weigh', '--budget', 'abc']).status, 2);
+  assert.equal(runCli(['weigh', '--top', '-1']).status, 2);
+  assert.equal(runCli(['--brief']).status, 2, '--brief outside weigh rejected');
+  assert.equal(runCli(['check', '--budget', '5']).status, 2, '--budget outside weigh rejected');
 });

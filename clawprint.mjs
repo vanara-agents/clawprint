@@ -29,7 +29,7 @@ import { join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
-export const VERSION = '0.2.0';
+export const VERSION = '0.3.0';
 export const MANIFEST_MD = 'CLAWPRINT.md';
 export const MANIFEST_JSON = '.clawprint.json';
 
@@ -1105,6 +1105,205 @@ export function compareReports(oldReport, newReport, { allowContentDrift = false
 }
 
 // ---------------------------------------------------------------------------
+// weigh — context-cost inventory (docs/WEIGH-SPEC.md)
+// Chars are exact; token figures are labeled estimates (chars ÷ 4). Groups
+// files by WHEN they enter the context window: always / invoke / reference.
+// ---------------------------------------------------------------------------
+
+export const estimateTokens = (chars) => Math.round(chars / 4);
+
+// Locale-independent thousands separator — toLocaleString would break the
+// byte-identical-output guarantee across machines.
+const fmt = (n) => n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+
+/**
+ * Extract the frontmatter `description:` value (inline, quoted, or block
+ * scalar) from a markdown file. Returns '' when absent — weigh reports the
+ * absence rather than guessing.
+ */
+export function frontmatterDescription(text) {
+  const fm = /^---\n([\s\S]*?)\n---(?:\n|$)/.exec(text);
+  if (!fm) return '';
+  const lines = fm[1].split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const m = /^description\s*:\s*(.*)$/.exec(lines[i]);
+    if (!m) continue;
+    const inline = m[1].trim();
+    if (inline && inline !== '|' && inline !== '>') return stripQuotes(inline);
+    const block = [];
+    for (let j = i + 1; j < lines.length; j++) {
+      const item = /^\s+(.*)$/.exec(lines[j]);
+      if (!item) break;
+      block.push(item[1]);
+    }
+    return block.join(' ');
+  }
+  return '';
+}
+
+// Kinds whose files are always in-context for their own (non-Claude Code) tool.
+const OTHER_ECOSYSTEM_KINDS = new Set(['agents-md', 'gemini-md', 'copilot-md', 'cursor', 'windsurf', 'cline', 'cursor-rule']);
+
+/** Primary .md of an item: SKILL.md if present, else the shortest-path .md. */
+function primaryFileOf(item) {
+  const mds = item.files.filter((f) => /\.(md|markdown)$/i.test(f.path));
+  return mds.find((f) => /(^|\/)SKILL\.md$/i.test(f.path))
+    ?? mds.sort((a, b) => a.path.length - b.path.length || codepointCompare(a.path, b.path))[0]
+    ?? null;
+}
+
+const textCharsOf = (buf) => normalizeEol(buf.toString('utf8')).length;
+
+/**
+ * Build the weigh report from discovered items. Pure and order-independent,
+ * same guarantee as buildReport.
+ */
+export function buildWeighReport(items) {
+  const report = {
+    version: VERSION,
+    tokenEstimate: 'chars/4',
+    always: { entries: [], chars: 0, tokens: 0 },
+    invoke: { items: [], chars: 0, tokens: 0 },
+    reference: { items: [], chars: 0, tokens: 0, binaryBytes: 0 },
+    other: { items: [], chars: 0, tokens: 0 },
+    notes: { mcpServers: 0, mcpFiles: 0, settingsFiles: 0, missingDescriptions: [] },
+  };
+  const descGroups = new Map(); // kind → {count, chars}
+
+  for (const item of [...items].sort((a, b) => codepointCompare(a.id, b.id))) {
+    if (item.kind === 'claude-md') {
+      const chars = item.files.reduce((n, f) => n + textCharsOf(Buffer.isBuffer(f.content) ? f.content : Buffer.from(f.content)), 0);
+      report.always.entries.push({ group: 'claude-md', label: `CLAUDE.md (${item.files.length} file${item.files.length === 1 ? '' : 's'})`, chars, tokens: estimateTokens(chars) });
+      continue;
+    }
+    if (item.kind === 'settings') {
+      report.notes.settingsFiles += item.files.length;
+      continue;
+    }
+    if (item.kind === 'mcp') {
+      report.notes.mcpFiles += 1;
+      for (const f of item.files) {
+        try {
+          const parsed = JSON.parse(normalizeEol(f.content.toString('utf8')));
+          const servers = parsed && typeof parsed === 'object' ? parsed.mcpServers ?? parsed : {};
+          if (servers && typeof servers === 'object' && !Array.isArray(servers)) {
+            report.notes.mcpServers += Object.keys(servers).length;
+          }
+        } catch { /* unparseable config still gets counted as a file above */ }
+      }
+      continue;
+    }
+    if (OTHER_ECOSYSTEM_KINDS.has(item.kind)) {
+      const chars = item.files.reduce((n, f) => n + textCharsOf(Buffer.isBuffer(f.content) ? f.content : Buffer.from(f.content)), 0);
+      report.other.items.push({ id: item.id, kind: item.kind, chars, tokens: estimateTokens(chars) });
+      continue;
+    }
+
+    // skill / agent / command
+    const primary = primaryFileOf(item);
+    if (primary) {
+      const buf = Buffer.isBuffer(primary.content) ? primary.content : Buffer.from(primary.content);
+      const text = normalizeEol(buf.toString('utf8'));
+      const desc = frontmatterDescription(text);
+      const groupKey = item.kind;
+      if (!descGroups.has(groupKey)) descGroups.set(groupKey, { count: 0, chars: 0 });
+      const g = descGroups.get(groupKey);
+      g.count += 1;
+      g.chars += desc.length;
+      if (!desc) report.notes.missingDescriptions.push(item.id);
+      report.invoke.items.push({ id: item.id, chars: text.length, tokens: estimateTokens(text.length) });
+    }
+    const rest = item.files.filter((f) => f !== primary);
+    if (rest.length) {
+      let chars = 0;
+      let binaryBytes = 0;
+      for (const f of rest) {
+        const buf = Buffer.isBuffer(f.content) ? f.content : Buffer.from(f.content);
+        if (isBinary(buf)) binaryBytes += buf.length;
+        else chars += textCharsOf(buf);
+      }
+      report.reference.items.push({ id: item.id, files: rest.length, chars, tokens: estimateTokens(chars), binaryBytes });
+    }
+  }
+
+  for (const kind of ['skill', 'agent', 'command']) {
+    const g = descGroups.get(kind);
+    if (!g) continue;
+    report.always.entries.push({ group: kind, label: `${kind} descriptions (${g.count})`, chars: g.chars, tokens: estimateTokens(g.chars) });
+  }
+
+  const sortHeaviest = (a, b) => b.chars - a.chars || codepointCompare(a.id, b.id);
+  report.invoke.items.sort(sortHeaviest);
+  report.reference.items.sort(sortHeaviest);
+  report.other.items.sort(sortHeaviest);
+  // totals derive from the exact per-entry chars; only the token figure is estimated
+  report.always.chars = report.always.entries.reduce((n, e) => n + e.chars, 0);
+  report.always.tokens = estimateTokens(report.always.chars);
+  report.invoke.chars = report.invoke.items.reduce((n, e) => n + e.chars, 0);
+  report.invoke.tokens = estimateTokens(report.invoke.chars);
+  report.reference.chars = report.reference.items.reduce((n, e) => n + e.chars, 0);
+  report.reference.tokens = estimateTokens(report.reference.chars);
+  report.reference.binaryBytes = report.reference.items.reduce((n, e) => n + e.binaryBytes, 0);
+  report.other.chars = report.other.items.reduce((n, e) => n + e.chars, 0);
+  report.other.tokens = estimateTokens(report.other.chars);
+  report.notes.missingDescriptions.sort(codepointCompare);
+  return report;
+}
+
+export const weighDir = (root) => buildWeighReport(discoverItems(root));
+
+export function renderWeighJson(report) {
+  return `${JSON.stringify(report, null, 2)}\n`;
+}
+
+const padRow = (label, chars, tokens) =>
+  `  ${label.padEnd(44)}${(`${fmt(chars)} chars`).padStart(16)}${(`~${fmt(tokens)} tokens`).padStart(16)}`;
+
+export function renderWeigh(report, { top = 5 } = {}) {
+  const lines = [
+    `clawprint weigh v${report.version} — estimated context cost of this agent config`,
+    'chars are exact; token figures are estimates (chars ÷ 4)',
+    '',
+    'ALWAYS LOADED — every session, before your first prompt',
+  ];
+  if (report.always.entries.length === 0) lines.push('  (nothing found)');
+  for (const e of report.always.entries) lines.push(padRow(e.label, e.chars, e.tokens));
+  lines.push(padRow('total', report.always.chars, report.always.tokens), '');
+
+  const heavies = (tier, name, unit) => {
+    if (tier.items.length === 0) return;
+    const shown = tier.items.slice(0, top);
+    lines.push(`${name} (top ${shown.length} of ${tier.items.length})`);
+    for (const it of shown) lines.push(padRow(it.id, it.chars, it.tokens));
+    const extra = tier.binaryBytes ? ` (+ ${fmt(tier.binaryBytes)} bytes binary, not estimated)` : '';
+    lines.push(padRow(`total (${tier.items.length} ${unit})`, tier.chars, tier.tokens) + extra, '');
+  };
+  heavies(report.invoke, 'LOADED ON INVOKE — the item\'s own .md body, when used', 'items');
+  heavies(report.reference, 'REFERENCED FILES — read only if the item uses them', 'items');
+  heavies(report.other, 'OTHER ECOSYSTEMS — always loaded by their own tool', 'files');
+
+  lines.push('NOT MEASURABLE OFFLINE');
+  lines.push(report.notes.mcpFiles > 0
+    ? `  MCP config: ${report.notes.mcpServers} server(s) — tool schemas load at runtime from the servers`
+    : '  MCP config: none found');
+  if (report.notes.settingsFiles > 0) lines.push('  settings hooks run as shell commands — no context cost');
+  if (report.notes.missingDescriptions.length > 0) {
+    lines.push('', `NO DESCRIPTION (loads nothing into the listing; the item may be hard to trigger)`);
+    for (const id of report.notes.missingDescriptions) lines.push(`  ${id}`);
+  }
+  lines.push('', `~${fmt(report.always.tokens)} tokens ride along with every session in this project.`);
+  return `${lines.join('\n')}\n`;
+}
+
+export function renderWeighBrief(report, { budget = null } = {}) {
+  const base = `clawprint weigh: ~${fmt(report.always.tokens)} tokens always loaded `
+    + `(${fmt(report.always.chars)} chars; ${fmt(report.invoke.items.length)} items on invoke)`;
+  if (budget === null) return `${base}\n`;
+  const over = report.always.tokens > budget;
+  return `${base} — budget ${fmt(budget)}: ${over ? 'EXCEEDED' : 'OK'}\n`;
+}
+
+// ---------------------------------------------------------------------------
 // selftest — embedded fixtures so the GitHub Action can gate without test/
 // ---------------------------------------------------------------------------
 
@@ -1191,6 +1390,32 @@ export function selftest() {
   ok(!cmpRemoval.breaking && cmpRemoval.lines.some((l) => l.startsWith('- [skills/spicy]')),
     'check: removal is safe with a - line');
 
+  // weigh: description extraction shapes
+  ok(frontmatterDescription('---\ndescription: plain value\n---\nbody') === 'plain value',
+    'weigh: inline description extracted');
+  ok(frontmatterDescription('---\ndescription: "quoted value"\n---\n') === 'quoted value',
+    'weigh: quoted description unquoted');
+  ok(frontmatterDescription('---\ndescription: |\n  line one\n  line two\n---\n') === 'line one line two',
+    'weigh: block-scalar description joined');
+  ok(frontmatterDescription('---\nname: x\n---\n') === '', 'weigh: absent description is empty');
+
+  // weigh: exact char accounting + determinism + budget semantics
+  const w = buildWeighReport(SELFTEST_ITEMS());
+  const spicyPrimary = SELFTEST_ITEMS()[0].files[0].content;
+  const spicyInvoke = w.invoke.items.find((i) => i.id === 'skills/spicy');
+  ok(spicyInvoke && spicyInvoke.chars === normalizeEol(spicyPrimary).length,
+    'weigh: invoke chars are exact primary-file chars');
+  ok(w.reference.items.some((i) => i.id === 'skills/spicy' && i.files === 1),
+    'weigh: non-primary files land in reference tier');
+  ok(w.notes.missingDescriptions.includes('skills/spicy'),
+    'weigh: missing description reported, not guessed');
+  const wReversed = buildWeighReport(SELFTEST_ITEMS().reverse().map((it) => ({ ...it, files: [...it.files].reverse() })));
+  ok(renderWeighJson(w) === renderWeighJson(wReversed), 'weigh determinism: input order irrelevant');
+  ok(renderWeigh(w) === renderWeigh(wReversed), 'weigh determinism: text output identical');
+  ok(renderWeighBrief(w, { budget: 0 }).includes('EXCEEDED') === (w.always.tokens > 0),
+    'weigh: zero budget exceeded iff anything always-loads');
+  ok(renderWeighBrief(w, { budget: 10_000_000 }).includes('OK'), 'weigh: generous budget passes');
+
   return failures;
 }
 
@@ -1204,6 +1429,7 @@ Usage:
   npx clawprint                  scan → write ${MANIFEST_MD} + ${MANIFEST_JSON}, print summary
   npx clawprint check            rescan → compare to committed manifest → exit 0/1
   npx clawprint diff             alias of check
+  npx clawprint weigh            estimated context cost (always/invoke/reference), writes nothing
   npx clawprint --dir <path>     scan a different root (works with all modes)
   npx clawprint --json           print the JSON report to stdout, write nothing
   npx clawprint --sarif          print a SARIF 2.1.0 report to stdout, write nothing
@@ -1211,15 +1437,27 @@ Usage:
 
 Flags:
   --allow-content-drift          in check mode: content-only changes are a note, not a failure
+  --top <n>                      in weigh mode: heaviest items to list per tier (default 5)
+  --budget <n>                   in weigh mode: exit 1 if always-loaded estimate exceeds n tokens
+  --brief                        in weigh mode: one-line output (for SessionStart hooks)
   --version                      print version
   --help                         print this help
 `;
 
 function parseArgs(argv) {
-  const opts = { mode: 'scan', dir: process.cwd(), json: false, sarif: false, selftest: false, allowContentDrift: false, help: false, version: false };
+  const opts = { mode: 'scan', dir: process.cwd(), json: false, sarif: false, selftest: false, allowContentDrift: false, help: false, version: false, top: 5, budget: null, brief: false };
+  const intArg = (argv, i, flag) => {
+    const v = Number.parseInt(argv[i], 10);
+    if (!Number.isInteger(v) || v < 0 || String(v) !== argv[i]) throw new Error(`${flag} requires a non-negative integer`);
+    return v;
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === 'check' || a === 'diff') opts.mode = 'check';
+    else if (a === 'weigh') opts.mode = 'weigh';
+    else if (a === '--top') { i++; opts.top = intArg(argv, i, '--top'); }
+    else if (a === '--budget') { i++; opts.budget = intArg(argv, i, '--budget'); }
+    else if (a === '--brief') opts.brief = true;
     else if (a === '--dir') {
       i++;
       if (!argv[i]) throw new Error('--dir requires a path');
@@ -1258,14 +1496,32 @@ export function main(argv = process.argv.slice(2)) {
     return 1;
   }
 
-  if (opts.sarif && opts.mode === 'check') {
-    process.stderr.write('clawprint: --sarif is a scan-mode output; it is not supported with check\n');
+  if (opts.sarif && opts.mode !== 'scan') {
+    process.stderr.write('clawprint: --sarif is a scan-mode output; it is not supported with check or weigh\n');
+    return 2;
+  }
+  if ((opts.brief || opts.budget !== null) && opts.mode !== 'weigh') {
+    process.stderr.write('clawprint: --brief and --budget only apply to weigh mode\n');
     return 2;
   }
 
   if (!existsSync(opts.dir)) {
     process.stderr.write(`clawprint: directory not found: ${opts.dir}\n`);
     return 2;
+  }
+
+  if (opts.mode === 'weigh') {
+    const weighReport = weighDir(opts.dir);
+    if (opts.json) process.stdout.write(renderWeighJson(weighReport));
+    else if (opts.brief) process.stdout.write(renderWeighBrief(weighReport, { budget: opts.budget }));
+    else {
+      process.stdout.write(renderWeigh(weighReport, { top: opts.top }));
+      if (opts.budget !== null) {
+        const over = weighReport.always.tokens > opts.budget;
+        process.stdout.write(`\nbudget ${fmt(opts.budget)} tokens (always-loaded): ${over ? 'EXCEEDED' : 'OK'}\n`);
+      }
+    }
+    return opts.budget !== null && weighReport.always.tokens > opts.budget ? 1 : 0;
   }
 
   const report = scanDir(opts.dir);

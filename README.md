@@ -162,12 +162,62 @@ update" PR sails through every content-hash tool — the hash is simply
 regenerated with the PR. Scanners judge once, at install time; nothing watches
 **change-over-time at the capability level**. That's clawprint's job.
 
+## Weigh: what does your setup cost?
+
+Capabilities are one inventory question. The other: **how much context does
+this folder inject, every single session?** Agent configs accrete — CLAUDE.md
+grows, skills multiply — and the cost stays invisible until sessions feel
+slow or hit limits.
+
+```bash
+npx clawprint weigh
+```
+
+groups every file by *when* it enters the context window:
+
+- **Always loaded** — CLAUDE.md + each skill/agent/command's frontmatter
+  `description` (its listing entry). This is the tax on every session,
+  before your first prompt.
+- **Loaded on invoke** — the item's own `.md` body, only when it's used.
+- **Referenced files** — `references/`, `scripts/` etc., only if the agent
+  reads them.
+
+Character counts are exact; token figures are labeled estimates (chars ÷ 4)
+derived from them. What can't be measured offline is said, not guessed: MCP
+tool schemas load at runtime from the servers, hook commands run as shell.
+No verdicts — the only pass/fail is the budget *you* set:
+
+```bash
+npx clawprint weigh --budget 15000    # exit 1 if the always-loaded estimate exceeds it
+```
+
+That's the CI gate for context bloat, the same way `check` gates
+capabilities. And `--brief` makes it a one-line
+[SessionStart hook](docs/recipes.md), so every session opens by telling you
+what it's carrying:
+
+```json
+{ "hooks": { "SessionStart": [ { "hooks": [
+  { "type": "command", "command": "npx clawprint weigh --brief" }
+] } ] } }
+```
+
+What weigh will **not** do: predict how many tokens a specific answer will
+consume, or promise that a given skill "saves tokens" on a given prompt.
+That depends on model behavior at runtime — a deterministic tool printing
+such a number would be manufacturing false precision. Design details in
+[docs/WEIGH-SPEC.md](docs/WEIGH-SPEC.md).
+
 ## CLI reference
 
 ```
 npx clawprint                  # scan → write CLAWPRINT.md + .clawprint.json, print summary
 npx clawprint check            # rescan → compare to committed manifest → exit 0/1 + human diff
 npx clawprint diff             # alias of check
+npx clawprint weigh            # estimated context cost: always / on-invoke / referenced tiers
+npx clawprint weigh --top 10   # list the 10 heaviest items per tier (default 5)
+npx clawprint weigh --budget N # exit 1 if the always-loaded estimate exceeds N tokens
+npx clawprint weigh --brief    # one line, made for SessionStart hooks
 npx clawprint --dir <path>     # scan a different root (works with all modes)
 npx clawprint --json           # print the JSON report to stdout, write nothing
 npx clawprint --sarif          # print a SARIF 2.1.0 report (for the GitHub Security tab)
