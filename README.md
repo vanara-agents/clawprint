@@ -1,89 +1,76 @@
-# clawprint
+<div align="center">
 
-**The capability manifest for your `.claude/` directory. Know exactly what your
-agent setup can do, and catch every change in PR review.**
-
-`terraform plan` for your agent config: deterministic, zero-dependency, no AI,
-no verdicts.
+<img src="docs/assets/hero.svg" alt="clawprint — know what your agent setup can do, and catch every change in review" width="900">
 
 [![CI](https://github.com/vanara-agents/clawprint/actions/workflows/ci.yml/badge.svg)](https://github.com/vanara-agents/clawprint/actions/workflows/ci.yml)
+&nbsp;·&nbsp; one file &nbsp;·&nbsp; zero dependencies &nbsp;·&nbsp; Node ≥ 20 &nbsp;·&nbsp; Apache-2.0
 
-An innocent-looking "docs update" PR touches a skill. The content hash changed —
-of course it did, that's what updates do. What the hash can't tell you is that
-the skill can now reach a new host. Clawprint can:
+</div>
 
-```diff
- ## skills/pdf-helper   `sha256:fa88551512a8…`
- - tools: Bash (.claude/skills/pdf-helper/SKILL.md), Read (…), WebFetch (…)
--- network: api.example-evil.test (.claude/skills/pdf-helper/SKILL.md)
-+- network: api.example-evil.test (.claude/skills/pdf-helper/SKILL.md), api.pastebin-mirror.test (.claude/skills/pdf-helper/SKILL.md)
-```
+## What is this? (plain English)
 
-And in CI, on the same PR:
+If you use Claude Code, your project probably has a `.claude/` folder full of
+**skills, agents, commands and hooks** — plus an `.mcp.json` and a `CLAUDE.md`.
+Together they quietly decide what your AI assistant is *able to do*: which
+shell commands it can run, which websites it can talk to, which secrets it can
+read, where it can write files.
 
-```
-+ [skills/pdf-helper] network: api.pastebin-mirror.test
+Here's the uncomfortable part: **that folder changes over time**, and nobody
+reads every line of every "docs update" PR. One added `curl` to an unfamiliar
+host looks like nothing in a 400-line diff.
 
-clawprint check: FAIL — new capabilities or content drift detected.
-```
+**clawprint is a packing list for that folder.** Run it once and it writes a
+short, human-readable inventory — *"this setup can run `node` and `curl`,
+reach `api.example.com`, read `GITHUB_TOKEN`"* — that you commit next to your
+code. From then on, any PR that changes what your agent setup **can do** shows
+up as a one-line diff a reviewer can't miss, and a CI check goes red until
+someone consciously approves it.
 
-Don't take the README's word for it — run the bundled fixture tests yourself:
+No AI, no cloud, no judgment calls. It never says "malicious" — it says
+*"this skill can now reach a new host"* and lets a human decide. Same input
+always produces byte-identical output, so the diffs are clean and it runs
+fully offline.
 
-```
-npx clawprint --selftest
-```
+<div align="center">
+<img src="docs/assets/demo.svg" alt="Terminal demo: clawprint scans the project and writes the manifest; weeks later, clawprint check fails a PR that quietly added a new network host to a skill" width="900">
+</div>
 
-## The gap
+## Use it in 3 steps
 
-The agent-config trust space has three occupied niches and one that was empty:
-
-| Niche | Question it answers | Examples |
-|---|---|---|
-| Security scanners | "Is this skill malicious?" (verdicts at install time) | snyk/agent-scan, ai-skill-scanner |
-| Content lockfiles | "Did the bytes change?" | skills-lock |
-| Eval harnesses | "Does this skill improve output?" | skill-eval-harness, skillcheck |
-| **Capability manifest + diff** | **"What can my setup DO, and what did this PR change about that?"** | **clawprint** |
-
-A skill that adds one `curl` to a new host in an innocent-looking "docs update"
-PR sails through every content-hash tool — the hash is simply regenerated with
-the PR. Scanners judge at install time; nothing watches **change-over-time at
-the capability level**. That's clawprint's job.
-
-## Quickstart
+**Step 1 — take the inventory** (in your project folder):
 
 ```bash
-npx clawprint            # scan → writes CLAWPRINT.md + .clawprint.json
-git add CLAWPRINT.md .clawprint.json && git commit -m "chore: add clawprint manifest"
-npx clawprint check      # exit 1 if capabilities changed since the commit
+npx clawprint
 ```
 
-From then on, every PR that changes what your agent setup *can do* shows up as
-a reviewable diff in `CLAWPRINT.md` — and `check` fails CI until the manifest
-is regenerated and the change is consciously committed.
+This writes two files: `CLAWPRINT.md` (the readable inventory) and
+`.clawprint.json` (the machine version). It changes nothing else and never
+touches the network.
 
-### No npm required
-
-The whole tool is one stdlib-only file, so the npm registry is a convenience,
-not a dependency. All of these work with nothing but Node ≥ 20:
+**Step 2 — commit them**, like a lockfile:
 
 ```bash
-# run straight from GitHub via npx (git fetch, no registry)
-npx github:vanara-agents/clawprint
-
-# or download the single file and run it — that's the entire tool
-curl -fsSL https://raw.githubusercontent.com/vanara-agents/clawprint/main/clawprint.mjs -o clawprint.mjs
-node clawprint.mjs --selftest
-node clawprint.mjs
-
-# or clone it
-git clone https://github.com/vanara-agents/clawprint && node clawprint/clawprint.mjs
+git add CLAWPRINT.md .clawprint.json
+git commit -m "add capability manifest"
 ```
 
-The GitHub Action below never touches npm either — it runs the checked-out
-file directly. If you vendor `clawprint.mjs` into your repo, you can read
-every line of what you're trusting first, which is rather the point.
+**Step 3 — check for changes** (in CI, or any time you're suspicious):
 
-### GitHub Action
+```bash
+npx clawprint check
+```
+
+- Nothing changed → exits 0, says so, everyone moves on.
+- Something **new** appeared (a host, a command, an env var…) → exits 1 and
+  prints exactly what, like `+ [skills/pdf-helper] network: api.pastebin-mirror.test`.
+- To accept an intended change: rerun `npx clawprint`, commit the updated
+  manifest, and the diff shows reviewers exactly what was approved.
+
+<div align="center">
+<img src="docs/assets/how-it-works.svg" alt="How it works: your .claude directory is scanned into one committed manifest, and every capability change becomes a visible PR diff plus a CI check" width="900">
+</div>
+
+### Add the CI gate (copy-paste)
 
 ```yaml
 name: agent-config
@@ -98,7 +85,70 @@ jobs:
       - uses: vanara-agents/clawprint@main
 ```
 
-### CLI
+### No npm required
+
+The whole tool is one stdlib-only file, so the npm registry is a convenience,
+not a dependency. All of these work with nothing but Node ≥ 20:
+
+```bash
+# run straight from GitHub via npx (git fetch, no registry)
+npx github:vanara-agents/clawprint
+
+# or download the single file and run it — that's the entire tool
+curl -fsSL https://raw.githubusercontent.com/vanara-agents/clawprint/main/clawprint.mjs -o clawprint.mjs
+node clawprint.mjs
+
+# or clone it
+git clone https://github.com/vanara-agents/clawprint && node clawprint/clawprint.mjs
+```
+
+The GitHub Action never touches npm either — it runs the checked-out file
+directly. Vendoring `clawprint.mjs` into your repo means you can read every
+line of what you're trusting first, which is rather the point.
+
+Don't take the README's word for any of this — run the bundled fixture tests
+yourself:
+
+```bash
+npx clawprint --selftest
+```
+
+## What it looks for
+
+| It reports… | …in plain terms | Example finding |
+|---|---|---|
+| `tools` | which built-in tools a skill/agent is granted | `tools: Bash, WebFetch` |
+| `commands` | which programs it can run | `commands: curl, node` |
+| `network` | which hosts it can reach | `network: api.example.test` |
+| `env` | which secrets/variables it reads | `env: GITHUB_TOKEN` |
+| `paths` | where it writes **outside** your project | `paths: ~/.ssh/config` |
+| `opaque` | content a human can't eyeball — long base64/hex blobs, invisible unicode | `opaque: base64(140) Y2xhd3ByaW50…` |
+| `hash` | a fingerprint of every file, so *any* edit is detectable | `sha256:fa8855…` |
+
+It scans everything agent-shaped under your project root: `.claude/skills/**`,
+`.claude/agents/**`, `.claude/commands/**`, `.claude/settings.json` +
+`settings.local.json` (hooks and permissions), `.mcp.json` (server commands
+and URLs), and `CLAUDE.md` / `CLAUDE.local.md`. Missing folders are fine.
+Files it can't read as text (binaries, oversized) are still fingerprinted
+**and** flagged — nothing is silently skipped.
+
+## Why not just a scanner or a lockfile?
+
+The agent-config trust space has three occupied niches and one that was empty:
+
+| Niche | Question it answers | Examples |
+|---|---|---|
+| Security scanners | "Is this skill malicious?" (verdicts at install time) | snyk/agent-scan, ai-skill-scanner |
+| Content lockfiles | "Did the bytes change?" | skills-lock |
+| Eval harnesses | "Does this skill improve output?" | skill-eval-harness, skillcheck |
+| **Capability manifest + diff** | **"What can my setup DO, and what did this PR change about that?"** | **clawprint** |
+
+A skill that adds one `curl` to a new host in an innocent-looking "docs
+update" PR sails through every content-hash tool — the hash is simply
+regenerated with the PR. Scanners judge once, at install time; nothing watches
+**change-over-time at the capability level**. That's clawprint's job.
+
+## CLI reference
 
 ```
 npx clawprint                  # scan → write CLAWPRINT.md + .clawprint.json, print summary
@@ -120,36 +170,13 @@ npx clawprint check --allow-content-drift   # content-only changes become a note
   should glance. `--allow-content-drift` downgrades this to a note.
 - **No manifest committed yet** → exit 1 with instructions.
 
-## What it scans
-
-Everything agent-shaped under a project root: `.claude/skills/**`,
-`.claude/agents/**`, `.claude/commands/**`, `.claude/settings.json` +
-`settings.local.json` (hooks and permission allowlists), `.mcp.json` (server
-commands and URLs), and `CLAUDE.md` / `CLAUDE.local.md`. Missing directories
-are fine.
-
-## What it extracts
-
-| Kind | What it captures | How |
-|---|---|---|
-| `tools` | Declared tool grants | `tools:` / `allowed-tools:` frontmatter in markdown |
-| `commands` | Shell commands invocable | Code fences, `.sh`/`.mjs`/`.py` scripts, hook command strings, MCP server commands (`npx -y pkg` also surfaces `pkg`) |
-| `network` | Hosts it can reach | URLs anywhere, `curl`/`wget`/`fetch`/`Invoke-WebRequest` targets, bare IPs — reported as unique hosts (full URL kept in the JSON) |
-| `env` | Environment variables read | `$VAR`, `%VAR%`, `$env:VAR`, `process.env.X`, `os.environ[...]` — minus a small noise list (PATH, HOME, …) |
-| `paths` | Writes **outside** the project | Redirects, `cp`/`mv`/`tee` targets, `writeFile`, `open(…, "w")`, `Set-Content` — only when the target starts with `~`, `/`, a drive letter or `%VAR%`. Project-relative writes are normal and not reported |
-| `opaque` | Opaque content | Base64/hex runs ≥ 40 chars, zero-width and bidi-control unicode |
-| `hash` | Content identity | sha256 per file + one hash per item — quietly covers the lockfile niche too |
-
-Every finding is descriptive: clawprint reports *"skill X can reach
-api.example.test"* — it never says "malicious". The human reading the diff
-makes the call. No AI, no network calls, no verdicts, runs air-gapped.
-
 ## Determinism
 
 Same input tree → byte-identical output, on every OS. No timestamps, sorted
-everything, CRLF normalized on read, `\n` on write. The committed manifest
-produces clean, reviewable git diffs — that's the whole point. CI enforces
-this on Ubuntu and Windows for every push.
+everything (codepoint order, never locale collation), CRLF and BOM normalized
+on read, `\n` on write. The committed manifest produces clean, reviewable git
+diffs — that's the whole point. CI enforces this on Ubuntu and Windows for
+every push.
 
 ## Honest limits
 
@@ -172,9 +199,8 @@ Pair it with a security scanner at install time. Clawprint's job is making
 
 Extractors are the contribution surface — each one is a single entry in the
 `EXTRACTORS` array with a fixture and a test. See
-[CONTRIBUTING.md](CONTRIBUTING.md). Good first issues: pip-install detection,
-PowerShell download cradles, `.cursor/` and Codex directory support, SARIF
-output.
+[CONTRIBUTING.md](CONTRIBUTING.md) and the
+[good first issues](https://github.com/vanara-agents/clawprint/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22).
 
 ## License
 

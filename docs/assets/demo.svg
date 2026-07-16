@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="440" viewBox="0 0 900 440" role="img" aria-label="Animated terminal demo: clawprint scans a project, then catches a new network host added by an innocent-looking PR">
+  <defs>
+    <clipPath id="win"><rect x="0" y="0" width="900" height="440" rx="14"/></clipPath>
+  </defs>
+
+  <!-- window -->
+  <rect x="1" y="1" width="898" height="438" rx="14" fill="#0D1117" stroke="#30363D" stroke-width="2"/>
+  <g clip-path="url(#win)">
+    <rect x="0" y="0" width="900" height="42" fill="#161B22"/>
+    <circle cx="26" cy="21" r="7" fill="#FF5F57"/>
+    <circle cx="50" cy="21" r="7" fill="#FEBC2E"/>
+    <circle cx="74" cy="21" r="7" fill="#28C840"/>
+    <text x="450" y="26" text-anchor="middle" font-family="ui-monospace, 'Cascadia Code', Consolas, monospace" font-size="13" fill="#8B949E">my-project — clawprint demo</text>
+  </g>
+
+  <g font-family="ui-monospace, 'Cascadia Code', Consolas, monospace" font-size="14.5">
+
+    <g opacity="0">
+      <animate attributeName="opacity" dur="16s" repeatCount="indefinite" calcMode="linear" values="0;0;1;1;0;0" keyTimes="0;0.0313;0.0531;0.9375;0.9625;1"/>
+      <text x="24" y="76"><tspan fill="#7EE787">$</tspan> <tspan fill="#E6EDF3">npx clawprint</tspan></text>
+    </g>
+
+    <g opacity="0">
+      <animate attributeName="opacity" dur="16s" repeatCount="indefinite" calcMode="linear" values="0;0;1;1;0;0" keyTimes="0;0.075;0.0969;0.9375;0.9625;1"/>
+      <text x="24" y="102" fill="#8B949E">clawprint v0.1.0: scanned 6 item(s) in ./my-project</text>
+    </g>
+
+    <g opacity="0">
+      <animate attributeName="opacity" dur="16s" repeatCount="indefinite" calcMode="linear" values="0;0;1;1;0;0" keyTimes="0;0.0938;0.1156;0.9375;0.9625;1"/>
+      <text x="24" y="126" fill="#8B949E">  commands: 11   network hosts: 9   env vars: 6   outside writes: 4   opaque blocks: 3</text>
+    </g>
+
+    <g opacity="0">
+      <animate attributeName="opacity" dur="16s" repeatCount="indefinite" calcMode="linear" values="0;0;1;1;0;0" keyTimes="0;0.1125;0.1344;0.9375;0.9625;1"/>
+      <text x="24" y="150" fill="#8B949E">Wrote CLAWPRINT.md and .clawprint.json — commit both.</text>
+    </g>
+
+    <g opacity="0">
+      <animate attributeName="opacity" dur="16s" repeatCount="indefinite" calcMode="linear" values="0;0;1;1;0;0" keyTimes="0;0.2;0.2219;0.9375;0.9625;1"/>
+      <text x="24" y="190"><tspan fill="#7EE787">$</tspan> <tspan fill="#E6EDF3">git add . </tspan><tspan fill="#FF7B72">&amp;&amp;</tspan><tspan fill="#E6EDF3"> git commit -m "add capability manifest"</tspan></text>
+    </g>
+
+    <g opacity="0">
+      <animate attributeName="opacity" dur="16s" repeatCount="indefinite" calcMode="linear" values="0;0;1;1;0;0" keyTimes="0;0.3125;0.3344;0.9375;0.9625;1"/>
+      <text x="24" y="234" fill="#586069" font-style="italic"># … weeks later, a "docs update" PR touches one skill file …</text>
+    </g>
+
+    <g opacity="0">
+      <animate attributeName="opacity" dur="16s" repeatCount="indefinite" calcMode="linear" values="0;0;1;1;0;0" keyTimes="0;0.4063;0.4281;0.9375;0.9625;1"/>
+      <text x="24" y="274"><tspan fill="#7EE787">$</tspan> <tspan fill="#E6EDF3">npx clawprint check</tspan></text>
+    </g>
+
+    <g opacity="0">
+      <animate attributeName="opacity" dur="16s" repeatCount="indefinite" calcMode="linear" values="0;0;1;1;0;0" keyTimes="0;0.4625;0.4844;0.9375;0.9625;1"/>
+      <text x="24" y="302" fill="#FF7B72" font-weight="700">+ [skills/pdf-helper] network: api.pastebin-mirror.test</text>
+    </g>
+
+    <g opacity="0">
+      <animate attributeName="opacity" dur="16s" repeatCount="indefinite" calcMode="linear" values="0;0;1;1;0;0" keyTimes="0;0.525;0.5469;0.9375;0.9625;1"/>
+      <text x="24" y="334" fill="#E6EDF3">clawprint check: <tspan fill="#FF7B72" font-weight="700">FAIL</tspan> — new capabilities or content drift detected.</text>
+    </g>
+
+    <g opacity="0">
+      <animate attributeName="opacity" dur="16s" repeatCount="indefinite" calcMode="linear" values="0;0;1;1;0;0" keyTimes="0;0.575;0.5969;0.9375;0.9625;1"/>
+      <text x="24" y="358" fill="#8B949E">If intended, regenerate the manifest (npx clawprint) and commit CLAWPRINT.md + .clawprint.json.</text>
+    </g>
+
+    <g opacity="0">
+      <animate attributeName="opacity" dur="16s" repeatCount="indefinite" calcMode="linear" values="0;0;1;1;0;0" keyTimes="0;0.6563;0.6781;0.9375;0.9625;1"/>
+      <text x="24" y="398" fill="#586069" font-style="italic"># the skill quietly gained a new network host — and the reviewer saw it before merge</text>
+    </g>
+
+    <rect x="24" y="408" width="9" height="17" fill="#E6EDF3">
+      <animate attributeName="opacity" dur="1.1s" repeatCount="indefinite" values="1;1;0;0" keyTimes="0;0.5;0.51;1"/>
+    </rect>
+  </g>
+</svg>
