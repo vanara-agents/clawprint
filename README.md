@@ -61,6 +61,28 @@ From then on, every PR that changes what your agent setup *can do* shows up as
 a reviewable diff in `CLAWPRINT.md` — and `check` fails CI until the manifest
 is regenerated and the change is consciously committed.
 
+### No npm required
+
+The whole tool is one stdlib-only file, so the npm registry is a convenience,
+not a dependency. All of these work with nothing but Node ≥ 20:
+
+```bash
+# run straight from GitHub via npx (git fetch, no registry)
+npx github:vanara-agents/clawprint
+
+# or download the single file and run it — that's the entire tool
+curl -fsSL https://raw.githubusercontent.com/vanara-agents/clawprint/main/clawprint.mjs -o clawprint.mjs
+node clawprint.mjs --selftest
+node clawprint.mjs
+
+# or clone it
+git clone https://github.com/vanara-agents/clawprint && node clawprint/clawprint.mjs
+```
+
+The GitHub Action below never touches npm either — it runs the checked-out
+file directly. If you vendor `clawprint.mjs` into your repo, you can read
+every line of what you're trusting first, which is rather the point.
+
 ### GitHub Action
 
 ```yaml
