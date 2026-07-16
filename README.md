@@ -7,7 +7,7 @@
 
 </div>
 
-## What is this? (plain English)
+## What is this? 
 
 If you use Claude Code, your project probably has a `.claude/` folder full of
 **skills, agents, commands and hooks** — plus an `.mcp.json` and a `CLAUDE.md`.
