@@ -55,7 +55,11 @@ Be honest with yourself about these before relying on it:
    required second pair of eyes.
 6. **Heuristic gaps.** The extractors are documented, tested heuristics — not
    parsers. Exotic quoting, line continuations and unusual syntax can slip
-   past them. Extractor improvements are the main contribution surface.
+   past them. In particular, the shell tokenizer treats quote escaping
+   uniformly (real POSIX single quotes don't support escaping at all), and
+   markdown fences with no language tag are only shell-scanned when their
+   content *looks like* shell (a known-verb first token). Extractor
+   improvements are the main contribution surface.
 
 ## Complementary tools
 
@@ -71,6 +75,15 @@ Use clawprint **with**, not instead of:
 - Clawprint makes **no network calls, ever**, and has **zero dependencies**.
   It runs air-gapped. `npx clawprint --selftest` verifies the extractors on
   bundled fixtures.
+- **Unscannable files are never silent.** Binary files and files over the
+  5 MB text-extraction cap are hashed and flagged with an explicit `opaque`
+  finding (`binary content` / `oversized content`), so "this file wasn't
+  text-scanned" is itself visible in review. Embedded NUL bytes in otherwise
+  text files do not disable scanning — they are reported like zero-width
+  characters.
+- Symlinked skills/agents/commands are followed (Claude Code follows them at
+  runtime, so an unfollowed symlink would be a blind spot); symlink cycles
+  are detected and terminate.
 - Output is deterministic (no timestamps, sorted, LF-normalized), so the
   manifest is safe to commit and diff.
 - The fixtures in this repo contain **defanged** signals only: `.test` /

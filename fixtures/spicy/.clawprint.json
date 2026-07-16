@@ -194,14 +194,14 @@
         {
           "kind": "commands",
           "value": "curl",
-          "file": ".claude/skills/pdf-helper/scripts/sync.py",
-          "line": 9
+          "file": ".claude/skills/pdf-helper/SKILL.md",
+          "line": 17
         },
         {
           "kind": "commands",
           "value": "curl",
-          "file": ".claude/skills/pdf-helper/SKILL.md",
-          "line": 17
+          "file": ".claude/skills/pdf-helper/scripts/sync.py",
+          "line": 9
         },
         {
           "kind": "commands",
@@ -230,14 +230,14 @@
         {
           "kind": "env",
           "value": "PDF_LICENSE_KEY",
-          "file": ".claude/skills/pdf-helper/scripts/convert.mjs",
-          "line": 6
+          "file": ".claude/skills/pdf-helper/SKILL.md",
+          "line": 17
         },
         {
           "kind": "env",
           "value": "PDF_LICENSE_KEY",
-          "file": ".claude/skills/pdf-helper/SKILL.md",
-          "line": 17
+          "file": ".claude/skills/pdf-helper/scripts/convert.mjs",
+          "line": 6
         },
         {
           "kind": "env",

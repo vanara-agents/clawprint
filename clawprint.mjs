@@ -38,20 +38,57 @@ export const MANIFEST_JSON = '.clawprint.json';
 
 const sha256 = (data) => createHash('sha256').update(data).digest('hex');
 
-/** Normalize CRLF/CR to LF so hashes and extraction are identical on every OS. */
-export const normalizeEol = (text) => text.replace(/\r\n?/g, '\n');
+/**
+ * Normalize CRLF/CR to LF and strip a leading UTF-8 BOM so hashes and
+ * extraction are identical on every OS and editor. (A BOM would otherwise
+ * silently break frontmatter and JSON parsing — Windows editors add it.)
+ */
+export const normalizeEol = (text) => text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
 
 const toPosix = (p) => p.replace(/\\/g, '/');
 
-const isBinary = (buf) => buf.includes(0);
-
-const lineOf = (text, index) => {
-  let line = 1;
-  for (let i = 0; i < index && i < text.length; i++) if (text[i] === '\n') line++;
-  return line;
+/**
+ * Binary heuristic: ratio of suspicious control bytes in the first 8 KB, with
+ * an absolute floor. A NUL-in-file test alone would let an attacker disable
+ * every extractor for a file by appending a single NUL byte; real binaries
+ * (PNG, zip, compiled) have ~10% control bytes, so a 2% ratio + floor of 4
+ * keeps them binary while a text file with a few planted NULs stays scanned
+ * (and the NULs themselves are reported by the opaque extractor).
+ */
+const isBinary = (buf) => {
+  const sample = buf.subarray(0, 8192);
+  if (sample.length === 0) return false;
+  let suspicious = 0;
+  for (const b of sample) {
+    if (b === 0 || (b < 32 && b !== 9 && b !== 10 && b !== 11 && b !== 12 && b !== 13 && b !== 27)) suspicious++;
+  }
+  return suspicious > Math.max(4, sample.length * 0.02);
 };
 
-const uniqSorted = (arr) => [...new Set(arr)].sort();
+/** Deterministic codepoint comparison — never localeCompare (locale-dependent). */
+const codepointCompare = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+
+// Per-text newline offsets, built once and binary-searched — lineOf is called
+// per regex match and a linear rescan would be O(n²) on large files.
+const lineOffsetsCache = new Map();
+const lineOf = (text, index) => {
+  let offsets = lineOffsetsCache.get(text);
+  if (!offsets) {
+    offsets = [0];
+    for (let i = 0; i < text.length; i++) if (text[i] === '\n') offsets.push(i + 1);
+    lineOffsetsCache.set(text, offsets);
+  }
+  let lo = 0;
+  let hi = offsets.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (offsets[mid] <= index) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo + 1;
+};
+
+const uniqSorted = (arr) => [...new Set(arr)].sort(codepointCompare);
 
 // ---------------------------------------------------------------------------
 // file context — every extractor receives the raw text plus a pre-computed
@@ -60,6 +97,21 @@ const uniqSorted = (arr) => [...new Set(arr)].sort();
 
 const SHELL_FENCE_LANGS = new Set(['bash', 'sh', 'shell', 'zsh', 'console', 'terminal']);
 const PS_FENCE_LANGS = new Set(['powershell', 'ps1', 'pwsh']);
+
+// Untagged or unknown-language fences still get shell extraction when their
+// content looks like shell — otherwise omitting the language tag (very common,
+// and trivially cheap for an attacker) would hide commands/env/paths entirely.
+const SHELL_VERB_HINTS = new Set([
+  'bash', 'sh', 'zsh', 'curl', 'wget', 'node', 'python', 'python3', 'pip', 'pip3',
+  'npm', 'npx', 'pnpm', 'yarn', 'bun', 'bunx', 'uv', 'uvx', 'pipx', 'git', 'echo',
+  'cp', 'mv', 'rm', 'mkdir', 'cat', 'tee', 'chmod', 'ssh', 'scp', 'rsync', 'tar',
+  'make', 'docker', 'go', 'cargo', 'pwsh', 'powershell', 'sudo', 'export', 'source',
+]);
+
+const looksLikeShell = (text) => text.split('\n').some((line) => {
+  const tok = line.trim().replace(/^\$\s+/, '').split(/\s+/)[0];
+  return Boolean(tok) && SHELL_VERB_HINTS.has(toPosix(tok).split('/').pop());
+});
 
 const extOf = (relPath) => {
   const m = /\.([a-z0-9]+)$/i.exec(relPath);
@@ -92,7 +144,7 @@ function collectJsonCommands(node, out = [], path = '') {
         const args = Array.isArray(node.args)
           ? node.args.filter((a) => typeof a === 'string').join(' ')
           : '';
-        out.push({ text: args ? `${val} ${args}` : val, jsonPath: `${path}.${key}` });
+        out.push({ text: args ? `${val} ${args}` : val, raw: val, jsonPath: `${path}.${key}` });
       }
       collectJsonCommands(val, out, `${path}.${key}`);
     }
@@ -121,6 +173,7 @@ export function buildContext(text, relPath) {
     for (const f of ctx.fences) {
       if (SHELL_FENCE_LANGS.has(f.lang)) ctx.shellUnits.push({ text: f.text, startLine: f.startLine, flavor: 'sh' });
       else if (PS_FENCE_LANGS.has(f.lang)) ctx.shellUnits.push({ text: f.text, startLine: f.startLine, flavor: 'ps' });
+      else if (looksLikeShell(f.text)) ctx.shellUnits.push({ text: f.text, startLine: f.startLine, flavor: 'sh' });
     }
   } else if (ext === 'sh' || ext === 'bash' || ext === 'zsh') {
     ctx.shellUnits.push({ text, startLine: 1, flavor: 'sh' });
@@ -133,10 +186,15 @@ export function buildContext(text, relPath) {
       ctx.json = null; // unparseable JSON is still scanned as plain text
     }
     if (ctx.json !== null) {
+      // Locate each command string in the source for a line number. Commands
+      // arrive in document order, so a running cursor keeps duplicate command
+      // values pointing at their own occurrence, not the first one.
+      let cursor = 0;
       for (const cmd of collectJsonCommands(ctx.json)) {
-        // Locate the command string in the source text for a line number.
-        const idx = text.indexOf(JSON.stringify(cmd.text.split(' ')[0]).slice(1, -1));
+        const needle = JSON.stringify(cmd.raw);
+        const idx = text.indexOf(needle, cursor);
         const startLine = idx >= 0 ? lineOf(text, idx) : 1;
+        if (idx >= 0) cursor = idx + needle.length;
         ctx.shellUnits.push({ text: cmd.text, startLine, flavor: 'sh' });
       }
     }
@@ -168,6 +226,28 @@ const WRITE_TARGET_PREFIX = /^(~|\/|[A-Za-z]:[\\/]|%[A-Za-z_][A-Za-z0-9_]*%|\$HO
 const WRITE_TARGET_IGNORE = new Set(['/dev/null', '/dev/stdout', '/dev/stderr', '/dev/tty', 'NUL', 'nul']);
 
 const stripQuotes = (s) => s.replace(/^['"`]|['"`]$/g, '');
+
+/**
+ * Split a tool list on commas that are OUTSIDE parentheses, so Claude Code's
+ * scoped-grant syntax `Bash(npm run test, npm run build)` stays one grant.
+ */
+function splitToolList(inline) {
+  const parts = [];
+  let depth = 0;
+  let current = '';
+  for (const ch of inline) {
+    if (ch === '(') depth++;
+    else if (ch === ')') depth = Math.max(0, depth - 1);
+    if (ch === ',' && depth === 0) {
+      parts.push(current);
+      current = '';
+      continue;
+    }
+    current += ch;
+  }
+  parts.push(current);
+  return parts;
+}
 
 const isOutsideWriteTarget = (raw) => {
   const t = stripQuotes(raw.trim());
@@ -203,9 +283,34 @@ function shellSegments(line) {
   return segments;
 }
 
+/** Quote-aware word split: '"/opt/my tool" --flag' → ['/opt/my tool', '--flag']. */
+function splitWords(segment) {
+  const words = [];
+  let current = '';
+  let quote = null;
+  for (const ch of segment) {
+    if (quote) {
+      if (ch === quote) quote = null;
+      else current += ch;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === '`') {
+      quote = ch;
+      continue;
+    }
+    if (/\s/.test(ch)) {
+      if (current) { words.push(current); current = ''; }
+      continue;
+    }
+    current += ch;
+  }
+  if (current) words.push(current);
+  return words;
+}
+
 /** First meaningful command token of a shell segment, unwrapping sudo/env/npx etc. */
 function commandTokens(segment) {
-  const tokens = segment.split(/\s+/).filter(Boolean);
+  const tokens = splitWords(segment);
   const found = [];
   let i = 0;
   // skip leading VAR=value assignments
@@ -257,7 +362,7 @@ export const EXTRACTORS = [
         const line = li + 2; // +1 for opening ---, +1 for 1-indexing
         const inline = keyMatch[2].trim();
         if (inline && inline !== '|' && inline !== '>') {
-          for (const t of inline.replace(/^\[|\]$/g, '').split(',')) {
+          for (const t of splitToolList(inline.replace(/^\[|\]$/g, ''))) {
             const v = stripQuotes(t.trim());
             if (v) findings.push({ kind: 'tools', value: v, file: relPath, line });
           }
@@ -405,8 +510,9 @@ export const EXTRACTORS = [
       let m;
 
       for (const unit of ctx.shellUnits) {
-        // shell redirects: > target, >> target
-        const redirRe = /(?<![>\d])>{1,2}\s*((?:'[^']*'|"[^"]*"|[^\s;|&<>()]+))/g;
+        // shell redirects: > target, >> target, fd-numbered 2> target —
+        // but never fd duplication like 2>&1 (the (?!&) guard)
+        const redirRe = /(?<![>=&-])>{1,2}(?!&)\s*((?:'[^']*'|"[^"]*"|[^\s;|&<>()]+))/g;
         while ((m = redirRe.exec(unit.text)) !== null) {
           push(m[1], unit.startLine + lineOf(unit.text, m.index) - 1);
         }
@@ -479,8 +585,9 @@ export const EXTRACTORS = [
         });
       }
 
-      // zero-width and bidi-control characters (U+FEFF allowed only as BOM at 0)
-      const zwRe = /[​-‏‪-‮⁠-⁤]|(?<!^)﻿/gu;
+      // zero-width/bidi controls, embedded NULs, and non-BOM U+FEFF (a leading
+      // BOM never reaches here — normalizeEol strips it before extraction)
+      const zwRe = /[\u0000\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]/gu;
       const counts = new Map();
       while ((m = zwRe.exec(text)) !== null) {
         const cp = `U+${m[0].codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}`;
@@ -507,19 +614,56 @@ export const FINDING_KINDS = ['tools', 'commands', 'network', 'env', 'paths', 'o
 // item discovery — what gets scanned under a project root
 // ---------------------------------------------------------------------------
 
-function walkFiles(dir, out = []) {
-  let entries;
-  try {
-    entries = readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return out;
+/**
+ * Classify a dirent, following symlinks: Claude Code follows them at runtime,
+ * so an unfollowed symlinked skill/agent file would be a silent blind spot.
+ * Returns {isDir, isFile} or null for broken links / unreadable entries.
+ */
+function classifyEntry(entry, fullPath) {
+  if (entry.isSymbolicLink()) {
+    try {
+      const st = statSync(fullPath); // follows the link
+      return { isDir: st.isDirectory(), isFile: st.isFile() };
+    } catch {
+      return null; // broken symlink
+    }
   }
-  for (const e of entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
-    const full = join(dir, e.name);
-    if (e.isDirectory()) walkFiles(full, out);
-    else if (e.isFile()) out.push(full);
+  return { isDir: entry.isDirectory(), isFile: entry.isFile() };
+}
+
+/**
+ * Iterative walk (no recursion → no stack overflow on hostile depth) with a
+ * visited-realpath guard so symlink cycles terminate.
+ */
+function walkFiles(dir) {
+  const out = [];
+  const stack = [dir];
+  const visited = new Set();
+  while (stack.length > 0) {
+    const current = stack.pop();
+    let real;
+    try {
+      real = realpathSync(current);
+    } catch {
+      continue;
+    }
+    if (visited.has(real)) continue;
+    visited.add(real);
+    let entries;
+    try {
+      entries = readdirSync(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const e of entries) {
+      const full = join(current, e.name);
+      const cls = classifyEntry(e, full);
+      if (!cls) continue;
+      if (cls.isDir) stack.push(full);
+      else if (cls.isFile) out.push(full);
+    }
   }
-  return out;
+  return out.sort(codepointCompare);
 }
 
 /**
@@ -528,6 +672,7 @@ function walkFiles(dir, out = []) {
  * Missing directories are fine — they just produce no items.
  */
 export function discoverItems(root) {
+  root = resolve(root); // rel() slices by root.length — an unresolved root would corrupt paths
   const items = [];
   const rel = (abs) => toPosix(abs.slice(root.length + 1));
   const readAll = (paths) => paths.map((p) => ({ path: rel(p), content: readFileSync(p) }));
@@ -535,12 +680,14 @@ export function discoverItems(root) {
   for (const [dirName, kind] of [['skills', 'skill'], ['agents', 'agent'], ['commands', 'command']]) {
     const base = join(root, '.claude', dirName);
     if (!existsSync(base)) continue;
-    for (const entry of readdirSync(base, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+    for (const entry of readdirSync(base, { withFileTypes: true }).sort((a, b) => codepointCompare(a.name, b.name))) {
       const full = join(base, entry.name);
-      if (entry.isDirectory()) {
+      const cls = classifyEntry(entry, full);
+      if (!cls) continue;
+      if (cls.isDir) {
         const files = walkFiles(full);
         if (files.length) items.push({ id: `${dirName}/${entry.name}`, kind, files: readAll(files) });
-      } else if (entry.isFile() && /\.(md|markdown)$/i.test(entry.name)) {
+      } else if (cls.isFile && /\.(md|markdown)$/i.test(entry.name)) {
         const id = `${dirName}/${entry.name.replace(/\.(md|markdown)$/i, '')}`;
         items.push({ id, kind, files: readAll([full]) });
       }
@@ -567,25 +714,41 @@ export function discoverItems(root) {
 // report building — pure: items in, deterministic report out
 // ---------------------------------------------------------------------------
 
+// codepointCompare, never localeCompare: default collation follows the host
+// locale (ICU), which would make sort order — and therefore the manifest
+// bytes — differ between machines. Determinism rule.
 const compareFindings = (a, b) =>
-  a.kind.localeCompare(b.kind) || a.value.localeCompare(b.value)
-  || a.file.localeCompare(b.file) || a.line - b.line;
+  codepointCompare(a.kind, b.kind) || codepointCompare(a.value, b.value)
+  || codepointCompare(a.file, b.file) || a.line - b.line;
+
+// Text extraction cap: oversized files are hashed and flagged, not scanned —
+// unbounded regex passes over a planted 100 MB file would be a cheap DoS.
+const MAX_TEXT_SCAN_BYTES = 5 * 1024 * 1024;
 
 /**
  * Build the full report from discovered items. Pure and order-independent:
  * items and files may arrive in any order; output is always identical.
  */
 export function buildReport(items) {
+  lineOffsetsCache.clear(); // per-scan cache; keeps memory bounded for library use
   const reportItems = items.map((item) => {
     const files = {};
     const findings = [];
-    const sortedFiles = [...item.files].sort((a, b) => a.path.localeCompare(b.path));
+    const sortedFiles = [...item.files].sort((a, b) => codepointCompare(a.path, b.path));
 
     for (const f of sortedFiles) {
       const buf = Buffer.isBuffer(f.content) ? f.content : Buffer.from(f.content);
+      // Unscannable files are never silent: they get a hash AND an explicit
+      // finding, so "this file wasn't text-scanned" is itself visible in review.
       if (isBinary(buf)) {
         files[f.path] = sha256(buf);
-        continue; // binary files are hashed but not text-extracted
+        findings.push({ kind: 'opaque', value: 'binary content (not text-scanned)', file: f.path, line: 1 });
+        continue;
+      }
+      if (buf.length > MAX_TEXT_SCAN_BYTES) {
+        files[f.path] = sha256(buf);
+        findings.push({ kind: 'opaque', value: 'oversized content (not text-scanned)', file: f.path, line: 1 });
+        continue;
       }
       const text = normalizeEol(buf.toString('utf8'));
       files[f.path] = sha256(text);
@@ -598,7 +761,7 @@ export function buildReport(items) {
     // dedupe on kind|value|file, keeping the lowest line number
     const byKey = new Map();
     for (const fd of findings) {
-      const key = `${fd.kind} ${fd.value} ${fd.file}`;
+      const key = [fd.kind, fd.value, fd.file].join('\u0000');
       const prev = byKey.get(key);
       if (!prev || fd.line < prev.line) byKey.set(key, fd);
     }
@@ -614,7 +777,7 @@ export function buildReport(items) {
     };
   });
 
-  reportItems.sort((a, b) => a.id.localeCompare(b.id));
+  reportItems.sort((a, b) => codepointCompare(a.id, b.id));
   return { version: VERSION, items: reportItems };
 }
 
@@ -671,15 +834,19 @@ export function renderMarkdown(report) {
   for (const item of report.items) {
     lines.push(`## ${item.id}   \`sha256:${item.itemHash.slice(0, 12)}…\``);
     for (const kind of FINDING_KINDS) {
+      // every source file per value — hiding all but the first would mislead review
       const byValue = new Map();
       for (const f of item.findings) {
         if (f.kind !== kind) continue;
-        if (!byValue.has(f.value)) byValue.set(f.value, f.file);
+        if (!byValue.has(f.value)) byValue.set(f.value, new Set());
+        byValue.get(f.value).add(f.file);
       }
       if (byValue.size === 0) {
         lines.push(`- ${kind}: (none)`);
       } else {
-        const rendered = [...byValue.entries()].map(([v, file]) => `${v} (${file})`).join(', ');
+        const rendered = [...byValue.entries()]
+          .map(([v, fileSet]) => `${v} (${[...fileSet].sort(codepointCompare).join(', ')})`)
+          .join(', ');
         lines.push(`- ${kind}: ${rendered}`);
       }
     }
@@ -765,7 +932,7 @@ const SELFTEST_ITEMS = () => [
           'echo "$SELFTEST_TOKEN" > ~/.cache/selftest-drop.txt',
           '```',
           `opaque: ${'0123456789abcdef'.repeat(4)}`,
-          'hidden:​end',
+          'hidden:\u200Bend', // planted zero-width space (escaped so editors cannot strip it)
         ].join('\n'),
       },
       {
@@ -807,7 +974,7 @@ export function selftest() {
   ok(spicy.findings.some((f) => f.kind === 'paths' && f.value.startsWith('~/')), 'E5 paths: outside write detected');
   ok(spicy.findings.some((f) => f.kind === 'opaque' && f.value.startsWith('hex(')), 'E6 opaque: hex run detected');
   ok(spicy.findings.some((f) => f.kind === 'opaque' && f.value.includes('U+200B')), 'E6 opaque: zero-width char detected');
-  ok(clean.findings.filter((f) => f.kind !== 'tools').length === 0, 'clean fixture stays silent');
+  ok(clean.findings.length === 0, 'clean fixture stays silent');
 
   // determinism: same input twice, and reversed input order → byte-identical
   const again = buildReport(SELFTEST_ITEMS());
@@ -818,7 +985,8 @@ export function selftest() {
 
   // check semantics on the in-memory report
   const drifted = JSON.parse(renderJson(report));
-  drifted.items[1].findings.push({ kind: 'network', value: 'new.selftest-evil.test', file: 'x', line: 1 });
+  drifted.items.find((it) => it.id === 'skills/spicy')
+    .findings.push({ kind: 'network', value: 'new.selftest-evil.test', file: 'x', line: 1 });
   const cmp = compareReports(report, drifted);
   ok(cmp.breaking && cmp.lines.some((l) => l === '+ [skills/spicy] network: new.selftest-evil.test'),
     'check: new capability is breaking with a + line');
@@ -912,6 +1080,12 @@ export function main(argv = process.argv.slice(2)) {
       process.stderr.write(`clawprint check: could not parse ${MANIFEST_JSON}: ${err.message}\n`);
       return 1;
     }
+    if (!oldReport || typeof oldReport !== 'object' || !Array.isArray(oldReport.items)
+      || oldReport.items.some((it) => !it || typeof it.id !== 'string' || !Array.isArray(it.findings))) {
+      process.stderr.write(`clawprint check: ${MANIFEST_JSON} has an unexpected shape.\n`
+        + 'Regenerate it with `npx clawprint` and commit the result.\n');
+      return 1;
+    }
     if (oldReport.version !== VERSION) {
       process.stdout.write(`note: manifest was generated by clawprint v${oldReport.version}, `
         + `this is v${VERSION} — extractor behavior may differ; regenerate to align.\n`);
@@ -937,8 +1111,13 @@ export function main(argv = process.argv.slice(2)) {
     process.stdout.write(json);
     return 0;
   }
-  writeFileSync(join(opts.dir, MANIFEST_MD), renderMarkdown(report));
-  writeFileSync(join(opts.dir, MANIFEST_JSON), json);
+  try {
+    writeFileSync(join(opts.dir, MANIFEST_MD), renderMarkdown(report));
+    writeFileSync(join(opts.dir, MANIFEST_JSON), json);
+  } catch (err) {
+    process.stderr.write(`clawprint: could not write manifests: ${err.message}\n`);
+    return 1;
+  }
   const s = summarize(report);
   process.stdout.write(`clawprint v${VERSION}: scanned ${s.items} item(s) in ${opts.dir}\n`
     + `  commands: ${s.commands}  network hosts: ${s.network}  env vars: ${s.env}  `
@@ -956,4 +1135,6 @@ const isDirectRun = (() => {
   }
 })();
 
-if (isDirectRun) process.exit(main());
+// exitCode (not process.exit) lets pending stdout writes flush — process.exit
+// can truncate piped output on POSIX, e.g. inside GitHub Actions log capture.
+if (isDirectRun) process.exitCode = main();

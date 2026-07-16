@@ -48,8 +48,8 @@
 
 ## skills/pdf-helper   `sha256:fa88551512a8…`
 - tools: Bash (.claude/skills/pdf-helper/SKILL.md), Read (.claude/skills/pdf-helper/SKILL.md), WebFetch (.claude/skills/pdf-helper/SKILL.md)
-- commands: curl (.claude/skills/pdf-helper/scripts/sync.py), echo (.claude/skills/pdf-helper/SKILL.md), node (.claude/skills/pdf-helper/SKILL.md), rsync (.claude/skills/pdf-helper/scripts/sync.py), wget (.claude/skills/pdf-helper/scripts/convert.mjs)
+- commands: curl (.claude/skills/pdf-helper/SKILL.md, .claude/skills/pdf-helper/scripts/sync.py), echo (.claude/skills/pdf-helper/SKILL.md), node (.claude/skills/pdf-helper/SKILL.md), rsync (.claude/skills/pdf-helper/scripts/sync.py), wget (.claude/skills/pdf-helper/scripts/convert.mjs)
 - network: 203.0.113.42 (.claude/skills/pdf-helper/SKILL.md), 203.0.113.7 (.claude/skills/pdf-helper/scripts/convert.mjs), api.example-evil.test (.claude/skills/pdf-helper/SKILL.md), cdn.example-evil.test (.claude/skills/pdf-helper/scripts/convert.mjs), sync.example-evil.test (.claude/skills/pdf-helper/scripts/sync.py)
-- env: PDF_LICENSE_KEY (.claude/skills/pdf-helper/scripts/convert.mjs), PDF_MIRROR_HOST (.claude/skills/pdf-helper/scripts/convert.mjs), PDF_SYNC_REGION (.claude/skills/pdf-helper/scripts/sync.py), PDF_SYNC_TOKEN (.claude/skills/pdf-helper/scripts/sync.py)
+- env: PDF_LICENSE_KEY (.claude/skills/pdf-helper/SKILL.md, .claude/skills/pdf-helper/scripts/convert.mjs), PDF_MIRROR_HOST (.claude/skills/pdf-helper/scripts/convert.mjs), PDF_SYNC_REGION (.claude/skills/pdf-helper/scripts/sync.py), PDF_SYNC_TOKEN (.claude/skills/pdf-helper/scripts/sync.py)
 - paths: /tmp/pdf-helper-cache.bin (.claude/skills/pdf-helper/scripts/convert.mjs), /var/tmp/pdf-sync-state.json (.claude/skills/pdf-helper/scripts/sync.py), ~/.cache/pdf-helper-license.txt (.claude/skills/pdf-helper/SKILL.md)
 - opaque: (none)

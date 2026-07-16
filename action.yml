@@ -1,9 +1,12 @@
+# Prerequisite: Node.js >= 20 must be on PATH (ubuntu-latest runners ship it;
+# otherwise add an actions/setup-node@v4 step with node-version: '20' first).
 name: 'clawprint check'
 description: >-
   Fail the PR when the agent config (.claude/, .mcp.json, CLAUDE.md) gains a
   capability — a new network host, shell command, env var, tool grant, outside
   write or opaque block — that isn't reflected in the committed clawprint
-  manifest. Deterministic, offline, zero dependencies, no AI.
+  manifest. Deterministic, offline, zero dependencies, no AI. Requires
+  Node.js >= 20 on the runner.
 author: 'Vanara'
 branding:
   icon: 'shield'
@@ -26,11 +29,17 @@ runs:
       shell: bash
       run: node "${{ github.action_path }}/clawprint.mjs" --selftest
 
+    # Inputs are passed via env, never spliced into the script with ${{ }} —
+    # template substitution into bash is a shell-injection vector when callers
+    # feed untrusted event data (branch names, PR titles) into inputs.
     - name: clawprint check
       shell: bash
+      env:
+        INPUT_DIR: ${{ inputs.dir }}
+        INPUT_ALLOW_DRIFT: ${{ inputs.allow-content-drift }}
       run: |
-        ARGS=(check --dir "${{ inputs.dir }}")
-        if [ "${{ inputs.allow-content-drift }}" = "true" ]; then
+        ARGS=(check --dir "$INPUT_DIR")
+        if [ "$INPUT_ALLOW_DRIFT" = "true" ]; then
           ARGS+=(--allow-content-drift)
         fi
         node "${{ github.action_path }}/clawprint.mjs" "${ARGS[@]}"
