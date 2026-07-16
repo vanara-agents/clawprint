@@ -1,0 +1,10 @@
+---
+description: Style rule (benign fixture)
+globs: ["**/*.md"]
+alwaysApply: true
+---
+
+# Style rule (Cursor)
+
+Keep documentation concise. Use sentence case for headings. Prefer active
+voice. No commands, no network, no secrets — this rule only shapes prose.

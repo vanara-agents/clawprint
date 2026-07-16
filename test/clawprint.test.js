@@ -1,7 +1,7 @@
 // clawprint test suite — node --test, no frameworks, no dependencies.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { cpSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync, appendFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join, dirname } from 'node:path';
@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 import {
-  buildReport, scanDir, discoverItems, renderJson, renderMarkdown,
+  buildReport, scanDir, discoverItems, renderJson, renderMarkdown, renderSarif,
   compareReports, extractFences, EXTRACTORS, selftest,
   MANIFEST_JSON, MANIFEST_MD, VERSION,
 } from '../clawprint.mjs';
@@ -91,18 +91,161 @@ test('E6 opaque: base64 run, hex run, zero-width unicode', () => {
 test('E7 hash: per-file sha256 and stable item hash', () => {
   const spicy = scanDir(SPICY);
   const item = spicy.items.find((i) => i.id === 'skills/pdf-helper');
-  assert.equal(Object.keys(item.files).length, 3);
+  assert.ok(Object.keys(item.files).length >= 3, 'multiple files hashed');
   for (const h of Object.values(item.files)) assert.match(h, /^[0-9a-f]{64}$/);
   assert.match(item.itemHash, /^[0-9a-f]{64}$/);
 });
 
-test('clean fixture stays silent on network/env/paths/opaque', () => {
+test('clean fixture stays silent on installs/network/env/paths/opaque', () => {
   const clean = scanDir(CLEAN);
   assert.ok(clean.items.length >= 4, 'clean fixture has items');
   for (const item of clean.items) {
-    for (const kind of ['network', 'env', 'paths', 'opaque']) {
+    for (const kind of ['installs', 'network', 'env', 'paths', 'opaque']) {
       assert.ok(!hasKind(clean, item.id, kind), `${item.id} has no ${kind} findings`);
     }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// v0.2.0: installs extractor, PS cradles, language fences, ecosystems, SARIF
+// ---------------------------------------------------------------------------
+
+test('E8 installs: pip/npm/gem/uv package installs, version specs stripped', () => {
+  const spicy = scanDir(SPICY);
+  assert.ok(has(spicy, 'skills/pdf-helper', 'installs', 'pdfminer.six'), 'pip install pkg');
+  assert.ok(has(spicy, 'skills/pdf-helper', 'installs', 'requests'), 'pip version spec stripped (requests==2.31.0)');
+  assert.ok(has(spicy, 'skills/pdf-helper', 'installs', 'some-pdf-cli'), 'npm install -g pkg (flag skipped)');
+  assert.ok(has(spicy, 'agents-md', 'installs', 'ruff'), 'pip install in AGENTS.md');
+  assert.ok(has(spicy, 'agents-md', 'installs', 'bundler'), 'gem install');
+  assert.ok(has(spicy, 'cursor-rules/deploy', 'installs', 'httpx'), 'uv add');
+  // installs must never masquerade as a package name from a flag or the manager itself
+  const vals = findingsOf(spicy, 'skills/pdf-helper').filter((f) => f.kind === 'installs').map((f) => f.value);
+  assert.ok(!vals.includes('-g') && !vals.includes('pip') && !vals.includes('install'), 'no flags/manager as package');
+});
+
+test('PowerShell download cradles surface the host', () => {
+  const spicy = scanDir(SPICY);
+  assert.ok(has(spicy, 'skills/pdf-helper', 'network', 'cradle.example-evil.test'), 'DownloadString host');
+  assert.ok(has(spicy, 'skills/pdf-helper', 'network', 'bits.example-evil.test'), 'Start-BitsTransfer host');
+});
+
+test('PowerShell tokenizer: no (New-Object or bare = as commands', () => {
+  const spicy = scanDir(SPICY);
+  const cmds = findingsOf(spicy, 'skills/pdf-helper').filter((f) => f.kind === 'commands').map((f) => f.value);
+  assert.ok(!cmds.some((c) => c.includes('(') || c === '='), `clean command tokens: ${cmds.join(',')}`);
+  assert.ok(cmds.includes('New-Object'), 'New-Object reported without its leading paren');
+  assert.ok(cmds.includes('Start-BitsTransfer'), 'cmdlet reported');
+});
+
+test('language fences: python/js code blocks inside markdown are extracted', () => {
+  const spicy = scanDir(SPICY);
+  // the pdf-helper SKILL.md has a ```python fence
+  assert.ok(has(spicy, 'skills/pdf-helper', 'env', 'PDF_PY_TOKEN'), 'os.environ in python fence');
+  assert.ok(has(spicy, 'skills/pdf-helper', 'network', 'pyfence.example-evil.test'), 'subprocess curl in python fence');
+  assert.ok(has(spicy, 'skills/pdf-helper', 'paths', '/var/tmp/pdf-py-cache.txt'), "open(...,'w') in python fence");
+});
+
+test('ecosystems: Cursor rules (.mdc), AGENTS.md, Copilot, .cursor/mcp.json discovered', () => {
+  const spicy = scanDir(SPICY);
+  const ids = spicy.items.map((i) => i.id);
+  assert.ok(ids.includes('cursor-rules/deploy'), 'cursor .mdc rule');
+  assert.ok(ids.includes('cursor-mcp'), '.cursor/mcp.json');
+  assert.ok(ids.includes('agents-md'), 'AGENTS.md');
+  assert.ok(ids.includes('copilot-md'), '.github/copilot-instructions.md');
+  // cursor .mdc frontmatter tool grants are parsed like Claude skills
+  assert.ok(has(spicy, 'cursor-rules/deploy', 'tools', 'Bash'), 'mdc frontmatter tools');
+  assert.ok(has(spicy, 'cursor-mcp', 'network', 'cursor-mcp.example-evil.test'), 'cursor mcp url');
+  assert.ok(has(spicy, 'copilot-md', 'network', 'copilot.example-evil.test'), 'copilot scanned');
+});
+
+test('SARIF: valid 2.1.0 shape, all note-level, deterministic', () => {
+  const spicy = scanDir(SPICY);
+  const sarif = JSON.parse(renderSarif(spicy));
+  assert.equal(sarif.version, '2.1.0');
+  assert.equal(sarif.runs[0].tool.driver.name, 'clawprint');
+  assert.equal(sarif.runs[0].tool.driver.version, VERSION);
+  assert.ok(sarif.runs[0].results.length > 0);
+  assert.ok(sarif.runs[0].results.every((r) => r.level === 'note'), 'descriptive: never above note');
+  assert.ok(sarif.runs[0].results.every((r) => r.ruleId.startsWith('clawprint/')), 'namespaced rule ids');
+  assert.ok(sarif.runs[0].tool.driver.rules.every((r) => r.defaultConfiguration.level === 'note'));
+  // no timestamps / invocation → deterministic
+  assert.equal(renderSarif(spicy), renderSarif(scanDir(SPICY)));
+  assert.ok(!/\bendTime|\bstartTime|invocation/.test(renderSarif(spicy)), 'no time fields');
+});
+
+test('E8 installs extractor is registered and documented', () => {
+  const installs = EXTRACTORS.find((e) => e.id === 'installs');
+  assert.ok(installs, 'installs extractor present');
+  assert.match(installs.description, /[Pp]ackage/);
+});
+
+// --- v0.2.0 review fixes ---
+
+const mkSkill2 = (content, path = '.claude/skills/x/SKILL.md') =>
+  buildReport([{ id: 'skills/x', kind: 'skill', files: [{ path, content }] }]);
+
+test('installs: fully-qualified PowerShell prompt is stripped (PS C:\\path>)', () => {
+  const md = '```powershell\nPS C:\\Users\\foo> pip install requests\n```\n';
+  const report = mkSkill2(md);
+  const installs = report.items[0].findings.filter((f) => f.kind === 'installs').map((f) => f.value);
+  assert.deepEqual(installs, ['requests'], 'package found despite the PS prompt prefix');
+});
+
+test('installs: local-project targets (. and ..) are not package names', () => {
+  const md = '```bash\npip install .\npip install -e ..\n```\n';
+  const report = mkSkill2(md);
+  const installs = report.items[0].findings.filter((f) => f.kind === 'installs').map((f) => f.value);
+  assert.deepEqual(installs, [], 'no . or .. reported as packages');
+});
+
+test('installs: winget --source value is not mistaken for a package', () => {
+  const md = '```bash\nwinget install --source winget Publisher.App\n```\n';
+  const report = mkSkill2(md);
+  const installs = report.items[0].findings.filter((f) => f.kind === 'installs').map((f) => f.value);
+  assert.deepEqual(installs, ['Publisher.App'], 'source name skipped, only the package kept');
+});
+
+test('discovery: same-basename cursor rules get distinct ids (no shadowing)', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'clawprint-test-'));
+  try {
+    mkdirSync(join(dir, '.cursor', 'rules'), { recursive: true });
+    writeFileSync(join(dir, '.cursor', 'rules', 'deploy.mdc'), '# a\n```bash\ncurl https://a.example.test/x\n```\n');
+    writeFileSync(join(dir, '.cursor', 'rules', 'deploy.md'), '# b\n```bash\ncurl https://b.example.test/x\n```\n');
+    const items = discoverItems(dir);
+    const ids = items.filter((i) => i.kind === 'cursor-rule').map((i) => i.id).sort();
+    assert.equal(new Set(ids).size, ids.length, 'ids are unique');
+    assert.deepEqual(ids, ['cursor-rules/deploy', 'cursor-rules/deploy.md']);
+    // and compareReports must not report a still-present host as removed
+    const report = buildReport(items);
+    const hosts = report.items.flatMap((it) => it.findings.filter((f) => f.kind === 'network').map((f) => f.value));
+    assert.ok(hosts.includes('a.example.test') && hosts.includes('b.example.test'), 'both hosts survive');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('--sarif is rejected in check mode instead of silently ignored', () => {
+  const res = runCli(['check', '--sarif', '--dir', SPICY]);
+  assert.equal(res.status, 2);
+  assert.match(res.stderr, /--sarif is a scan-mode output/);
+});
+
+test('SARIF locations carry uriBaseId %SRCROOT%', () => {
+  const sarif = JSON.parse(renderSarif(scanDir(SPICY)));
+  assert.ok(sarif.runs[0].results.every((r) => r.locations[0].physicalLocation.artifactLocation.uriBaseId === '%SRCROOT%'));
+});
+
+test('--sarif via CLI emits valid JSON and writes no files', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'clawprint-test-'));
+  try {
+    cpSync(join(SPICY, '.claude'), join(dir, '.claude'), { recursive: true });
+    const res = runCli(['--sarif', '--dir', dir]);
+    assert.equal(res.status, 0);
+    const parsed = JSON.parse(res.stdout);
+    assert.equal(parsed.version, '2.1.0');
+    assert.throws(() => readFileSync(join(dir, MANIFEST_JSON)), 'no manifest written in --sarif mode');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 
@@ -480,7 +623,12 @@ test('discovery: relative --dir root produces correct relative paths', () => {
   assert.ok(items.length >= 4);
   for (const it of items) {
     for (const f of it.files) {
-      assert.ok(f.path.startsWith('.claude/'), `path looks sane: ${f.path}`);
+      // no absolute paths, no leaked drive letters, no path corruption from slicing
+      assert.ok(!/^([A-Za-z]:|\/)/.test(f.path), `relative path: ${f.path}`);
+      assert.ok(!f.path.includes('..'), `no traversal: ${f.path}`);
     }
   }
+  // the .claude items must still carry their .claude/ prefix intact
+  const skill = items.find((i) => i.id === 'skills/hello-docs');
+  assert.ok(skill && skill.files.some((f) => f.path.startsWith('.claude/skills/hello-docs/')), 'prefix intact');
 });

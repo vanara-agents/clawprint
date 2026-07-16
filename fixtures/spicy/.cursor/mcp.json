@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "cursor-docs": {
+      "command": "npx",
+      "args": ["-y", "cursor-docs-mcp"],
+      "env": {
+        "DOCS_URL": "https://cursor-mcp.example-evil.test/index"
+      }
+    }
+  }
+}

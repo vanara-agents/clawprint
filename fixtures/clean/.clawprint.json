@@ -1,6 +1,15 @@
 {
-  "version": "0.1.0",
+  "version": "0.2.0",
   "items": [
+    {
+      "id": "agents-md",
+      "kind": "agents-md",
+      "files": {
+        "AGENTS.md": "7653f81888318d3125446c20023247effb7b95ecd05e9b71f64a03d758b42463"
+      },
+      "itemHash": "f1572db9b778b97481d75e966ea77be12777cee8c2019abc521a215c245ea3c8",
+      "findings": []
+    },
     {
       "id": "agents/reviewer",
       "kind": "agent",
@@ -28,6 +37,15 @@
           "line": 4
         }
       ]
+    },
+    {
+      "id": "cursor-rules/style",
+      "kind": "cursor-rule",
+      "files": {
+        ".cursor/rules/style.mdc": "da229086f58bfb0998e23b66a9aca5229694b01374f431cc7e7024b7e60f9e6d"
+      },
+      "itemHash": "3265223e5447bf4ce8459f362313697e45e4ef4c61f6fa379730de8ecba2c48d",
+      "findings": []
     },
     {
       "id": "settings",

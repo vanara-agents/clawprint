@@ -119,18 +119,32 @@ npx clawprint --selftest
 |---|---|---|
 | `tools` | which built-in tools a skill/agent is granted | `tools: Bash, WebFetch` |
 | `commands` | which programs it can run | `commands: curl, node` |
-| `network` | which hosts it can reach | `network: api.example.test` |
+| `installs` | which packages it installs at runtime | `installs: requests, colorama` |
+| `network` | which hosts it can reach (incl. PowerShell download cradles) | `network: api.example.test` |
 | `env` | which secrets/variables it reads | `env: GITHUB_TOKEN` |
 | `paths` | where it writes **outside** your project | `paths: ~/.ssh/config` |
 | `opaque` | content a human can't eyeball — long base64/hex blobs, invisible unicode | `opaque: base64(140) Y2xhd3ByaW50…` |
 | `hash` | a fingerprint of every file, so *any* edit is detectable | `sha256:fa8855…` |
 
-It scans everything agent-shaped under your project root: `.claude/skills/**`,
-`.claude/agents/**`, `.claude/commands/**`, `.claude/settings.json` +
-`settings.local.json` (hooks and permissions), `.mcp.json` (server commands
-and URLs), and `CLAUDE.md` / `CLAUDE.local.md`. Missing folders are fine.
-Files it can't read as text (binaries, oversized) are still fingerprinted
-**and** flagged — nothing is silently skipped.
+### What it scans
+
+Everything agent-shaped under your project root — and not just Claude:
+
+- **Claude Code** — `.claude/skills/**`, `.claude/agents/**`,
+  `.claude/commands/**`, `.claude/settings.json` + `settings.local.json`
+  (hooks and permissions), `CLAUDE.md` / `CLAUDE.local.md`
+- **MCP** — `.mcp.json` and `.cursor/mcp.json` (server commands and URLs)
+- **Cursor** — `.cursor/rules/*.mdc` and legacy `.cursorrules`
+- **Codex / cross-tool** — `AGENTS.md`
+- **Gemini CLI** — `GEMINI.md`
+- **GitHub Copilot** — `.github/copilot-instructions.md`
+- **Windsurf / Cline** — `.windsurfrules`, `.clinerules`
+
+Missing files are fine — they just produce no items. Code blocks tagged
+` ```python ` / ` ```js ` inside any of these get the same Python/JS
+extraction as real script files. Files clawprint can't read as text
+(binaries, oversized) are still fingerprinted **and** flagged — nothing is
+silently skipped.
 
 ## Why not just a scanner or a lockfile?
 
@@ -156,9 +170,15 @@ npx clawprint check            # rescan → compare to committed manifest → ex
 npx clawprint diff             # alias of check
 npx clawprint --dir <path>     # scan a different root (works with all modes)
 npx clawprint --json           # print the JSON report to stdout, write nothing
+npx clawprint --sarif          # print a SARIF 2.1.0 report (for the GitHub Security tab)
 npx clawprint --selftest       # run bundled fixture tests, exit 0/1
 npx clawprint check --allow-content-drift   # content-only changes become a note, not a failure
 ```
+
+More ways to use it — pre-install trust checks, policy gates (allowlist hosts,
+block cloud-cred reads, forbid runtime installs), PR-comment bots, SARIF
+upload, capability forensics with `git bisect`, and org-wide inventory — are
+in **[docs/recipes.md](docs/recipes.md)**.
 
 **`check` semantics** (the CI gate):
 

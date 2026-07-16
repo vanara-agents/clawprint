@@ -1,7 +1,7 @@
 {
   "name": "clawprint",
-  "version": "0.1.0",
-  "description": "The capability manifest for your .claude/ directory. Know exactly what your agent setup can do, and catch every change in PR review. Deterministic, zero-dependency, no AI, no verdicts.",
+  "version": "0.2.0",
+  "description": "The capability manifest for your agent config (.claude/, .cursor/, AGENTS.md, .mcp.json ...). Know exactly what your agent setup can do, and catch every change in PR review. Deterministic, zero-dependency, no AI, no verdicts.",
   "type": "module",
   "bin": {
     "clawprint": "./clawprint.mjs"

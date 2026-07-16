@@ -1,6 +1,65 @@
 {
-  "version": "0.1.0",
+  "version": "0.2.0",
   "items": [
+    {
+      "id": "agents-md",
+      "kind": "agents-md",
+      "files": {
+        "AGENTS.md": "9e20db5db52bfb4e63813aa98cb6747a43a0412d3273949973e79d48c0a51e61"
+      },
+      "itemHash": "3675b8e8fa859556500bffde5d67c54d77323542c2c3181e4ab3fea10a0339bb",
+      "findings": [
+        {
+          "kind": "commands",
+          "value": "curl",
+          "file": "AGENTS.md",
+          "line": 15
+        },
+        {
+          "kind": "commands",
+          "value": "gem",
+          "file": "AGENTS.md",
+          "line": 9
+        },
+        {
+          "kind": "commands",
+          "value": "pip",
+          "file": "AGENTS.md",
+          "line": 8
+        },
+        {
+          "kind": "env",
+          "value": "AGENTS_RELEASE_KEY",
+          "file": "AGENTS.md",
+          "line": 15
+        },
+        {
+          "kind": "installs",
+          "value": "bundler",
+          "file": "AGENTS.md",
+          "line": 9
+        },
+        {
+          "kind": "installs",
+          "value": "mypy",
+          "file": "AGENTS.md",
+          "line": 8
+        },
+        {
+          "kind": "installs",
+          "value": "ruff",
+          "file": "AGENTS.md",
+          "line": 8
+        },
+        {
+          "kind": "network",
+          "value": "agents-md.example-evil.test",
+          "file": "AGENTS.md",
+          "line": 15,
+          "detail": "https://agents-md.example-evil.test/release"
+        }
+      ]
+    },
     {
       "id": "agents/release-bot",
       "kind": "agent",
@@ -111,6 +170,181 @@
       ]
     },
     {
+      "id": "copilot-md",
+      "kind": "copilot-md",
+      "files": {
+        ".github/copilot-instructions.md": "55126eec849712bc1be4b961b32d1f50ccc9b336a9afc6cb602fa8d01c5f4441"
+      },
+      "itemHash": "e1342615c181b826cf83269dec1754340bd5b39a7bfd0dd268e14616459c32b1",
+      "findings": [
+        {
+          "kind": "commands",
+          "value": "npm",
+          "file": ".github/copilot-instructions.md",
+          "line": 8
+        },
+        {
+          "kind": "commands",
+          "value": "wget",
+          "file": ".github/copilot-instructions.md",
+          "line": 14
+        },
+        {
+          "kind": "installs",
+          "value": "eslint",
+          "file": ".github/copilot-instructions.md",
+          "line": 8
+        },
+        {
+          "kind": "installs",
+          "value": "prettier",
+          "file": ".github/copilot-instructions.md",
+          "line": 8
+        },
+        {
+          "kind": "network",
+          "value": "copilot.example-evil.test",
+          "file": ".github/copilot-instructions.md",
+          "line": 14,
+          "detail": "https://copilot.example-evil.test/metrics"
+        }
+      ]
+    },
+    {
+      "id": "cursor-mcp",
+      "kind": "mcp",
+      "files": {
+        ".cursor/mcp.json": "6a281c960ac73091e4d5edd7776ff030b69561548a0d37923c484859224eea12"
+      },
+      "itemHash": "7cf07412ebcad1e57618cd27ac2c4a8a0bfb2ecd66a8c3432f8717580ebce0f8",
+      "findings": [
+        {
+          "kind": "commands",
+          "value": "cursor-docs-mcp",
+          "file": ".cursor/mcp.json",
+          "line": 4
+        },
+        {
+          "kind": "commands",
+          "value": "npx",
+          "file": ".cursor/mcp.json",
+          "line": 4
+        },
+        {
+          "kind": "network",
+          "value": "cursor-mcp.example-evil.test",
+          "file": ".cursor/mcp.json",
+          "line": 7,
+          "detail": "https://cursor-mcp.example-evil.test/index"
+        }
+      ]
+    },
+    {
+      "id": "cursor-rules/data-sync",
+      "kind": "cursor-rule",
+      "files": {
+        ".cursor/rules/data-sync.mdc": "c3893b1edd902c82a9bdb7aab60ec934df70781ae925cd7986c9ef23e7987f32"
+      },
+      "itemHash": "20bcedfb9ae29b796b2f7a3956a9023536d89b1b2022b4682c80b74144441773",
+      "findings": [
+        {
+          "kind": "commands",
+          "value": "pip",
+          "file": ".cursor/rules/data-sync.mdc",
+          "line": 11
+        },
+        {
+          "kind": "commands",
+          "value": "scp",
+          "file": ".cursor/rules/data-sync.mdc",
+          "line": 21
+        },
+        {
+          "kind": "env",
+          "value": "CURSOR_SYNC_TOKEN",
+          "file": ".cursor/rules/data-sync.mdc",
+          "line": 20
+        },
+        {
+          "kind": "installs",
+          "value": "left-pad-py",
+          "file": ".cursor/rules/data-sync.mdc",
+          "line": 11
+        },
+        {
+          "kind": "installs",
+          "value": "requests-mirror",
+          "file": ".cursor/rules/data-sync.mdc",
+          "line": 11
+        }
+      ]
+    },
+    {
+      "id": "cursor-rules/deploy",
+      "kind": "cursor-rule",
+      "files": {
+        ".cursor/rules/deploy.mdc": "65579bd5d72231a3b915738bf9b7cc6e3b20ae1a1b019f857ab2e696f1f354e1"
+      },
+      "itemHash": "2d2306db4d9fbf6b46fb173b478998b2a653aeee0e56f046ecbdc3690d0407f7",
+      "findings": [
+        {
+          "kind": "commands",
+          "value": "cp",
+          "file": ".cursor/rules/deploy.mdc",
+          "line": 15
+        },
+        {
+          "kind": "commands",
+          "value": "curl",
+          "file": ".cursor/rules/deploy.mdc",
+          "line": 14
+        },
+        {
+          "kind": "commands",
+          "value": "uv",
+          "file": ".cursor/rules/deploy.mdc",
+          "line": 13
+        },
+        {
+          "kind": "env",
+          "value": "CURSOR_DEPLOY_TOKEN",
+          "file": ".cursor/rules/deploy.mdc",
+          "line": 14
+        },
+        {
+          "kind": "installs",
+          "value": "httpx",
+          "file": ".cursor/rules/deploy.mdc",
+          "line": 13
+        },
+        {
+          "kind": "network",
+          "value": "cursor-rule.example-evil.test",
+          "file": ".cursor/rules/deploy.mdc",
+          "line": 14,
+          "detail": "https://cursor-rule.example-evil.test/hook"
+        },
+        {
+          "kind": "paths",
+          "value": "/var/log/cursor-deploys/latest.log",
+          "file": ".cursor/rules/deploy.mdc",
+          "line": 15
+        },
+        {
+          "kind": "tools",
+          "value": "Bash",
+          "file": ".cursor/rules/deploy.mdc",
+          "line": 5
+        },
+        {
+          "kind": "tools",
+          "value": "WebFetch",
+          "file": ".cursor/rules/deploy.mdc",
+          "line": 5
+        }
+      ]
+    },
+    {
       "id": "mcp",
       "kind": "mcp",
       "files": {
@@ -185,17 +419,36 @@
       "id": "skills/pdf-helper",
       "kind": "skill",
       "files": {
-        ".claude/skills/pdf-helper/SKILL.md": "56a2fe57d518cc64243fc6d3c77a915898e12b024ec6e9b7ff45a21dcdab6f33",
+        ".claude/skills/pdf-helper/SKILL.md": "f018cc96f86a886ade91f442c42a27e7edbe613810cfdeea2a5675eb200c1ec5",
+        ".claude/skills/pdf-helper/scripts/bootstrap.ps1": "11f5b5f7d70b08ff646b705e110f2521810d433839c129b00eb70fdf8be2b3d0",
         ".claude/skills/pdf-helper/scripts/convert.mjs": "ca1dc1deea38d1a2d49598602984db3591b1383bafe44f9175c56960bbdaedbb",
         ".claude/skills/pdf-helper/scripts/sync.py": "a5ec6a5d1c739db4b91223da85e19945c79d4d8b3347064a8b2f729c58671416"
       },
-      "itemHash": "fa88551512a8c67c20cdfb449bbb3f7b1b9e78a83435f040397257d7eafa3bd9",
+      "itemHash": "e38647b015be5c643cebdba487569c5a0ce29ad00a081ae5dcc115c83e727b5b",
       "findings": [
+        {
+          "kind": "commands",
+          "value": "New-Object",
+          "file": ".claude/skills/pdf-helper/scripts/bootstrap.ps1",
+          "line": 5
+        },
+        {
+          "kind": "commands",
+          "value": "Set-Content",
+          "file": ".claude/skills/pdf-helper/scripts/bootstrap.ps1",
+          "line": 11
+        },
+        {
+          "kind": "commands",
+          "value": "Start-BitsTransfer",
+          "file": ".claude/skills/pdf-helper/scripts/bootstrap.ps1",
+          "line": 6
+        },
         {
           "kind": "commands",
           "value": "curl",
           "file": ".claude/skills/pdf-helper/SKILL.md",
-          "line": 17
+          "line": 19
         },
         {
           "kind": "commands",
@@ -207,13 +460,31 @@
           "kind": "commands",
           "value": "echo",
           "file": ".claude/skills/pdf-helper/SKILL.md",
-          "line": 18
+          "line": 20
         },
         {
           "kind": "commands",
           "value": "node",
           "file": ".claude/skills/pdf-helper/SKILL.md",
           "line": 16
+        },
+        {
+          "kind": "commands",
+          "value": "npm",
+          "file": ".claude/skills/pdf-helper/SKILL.md",
+          "line": 18
+        },
+        {
+          "kind": "commands",
+          "value": "pip",
+          "file": ".claude/skills/pdf-helper/SKILL.md",
+          "line": 17
+        },
+        {
+          "kind": "commands",
+          "value": "pip",
+          "file": ".claude/skills/pdf-helper/scripts/bootstrap.ps1",
+          "line": 9
         },
         {
           "kind": "commands",
@@ -231,7 +502,7 @@
           "kind": "env",
           "value": "PDF_LICENSE_KEY",
           "file": ".claude/skills/pdf-helper/SKILL.md",
-          "line": 17
+          "line": 19
         },
         {
           "kind": "env",
@@ -247,6 +518,18 @@
         },
         {
           "kind": "env",
+          "value": "PDF_PS_TOKEN",
+          "file": ".claude/skills/pdf-helper/scripts/bootstrap.ps1",
+          "line": 2
+        },
+        {
+          "kind": "env",
+          "value": "PDF_PY_TOKEN",
+          "file": ".claude/skills/pdf-helper/SKILL.md",
+          "line": 29
+        },
+        {
+          "kind": "env",
           "value": "PDF_SYNC_REGION",
           "file": ".claude/skills/pdf-helper/scripts/sync.py",
           "line": 6
@@ -258,10 +541,34 @@
           "line": 5
         },
         {
+          "kind": "installs",
+          "value": "colorama",
+          "file": ".claude/skills/pdf-helper/scripts/bootstrap.ps1",
+          "line": 9
+        },
+        {
+          "kind": "installs",
+          "value": "pdfminer.six",
+          "file": ".claude/skills/pdf-helper/SKILL.md",
+          "line": 17
+        },
+        {
+          "kind": "installs",
+          "value": "requests",
+          "file": ".claude/skills/pdf-helper/SKILL.md",
+          "line": 17
+        },
+        {
+          "kind": "installs",
+          "value": "some-pdf-cli",
+          "file": ".claude/skills/pdf-helper/SKILL.md",
+          "line": 18
+        },
+        {
           "kind": "network",
           "value": "203.0.113.42",
           "file": ".claude/skills/pdf-helper/SKILL.md",
-          "line": 23,
+          "line": 36,
           "detail": "203.0.113.42"
         },
         {
@@ -275,8 +582,15 @@
           "kind": "network",
           "value": "api.example-evil.test",
           "file": ".claude/skills/pdf-helper/SKILL.md",
-          "line": 17,
+          "line": 19,
           "detail": "https://api.example-evil.test/v1/telemetry"
+        },
+        {
+          "kind": "network",
+          "value": "bits.example-evil.test",
+          "file": ".claude/skills/pdf-helper/scripts/bootstrap.ps1",
+          "line": 6,
+          "detail": "https://bits.example-evil.test/tool.exe"
         },
         {
           "kind": "network",
@@ -284,6 +598,20 @@
           "file": ".claude/skills/pdf-helper/scripts/convert.mjs",
           "line": 10,
           "detail": "https://cdn.example-evil.test/fonts.tar.gz?k=${key}"
+        },
+        {
+          "kind": "network",
+          "value": "cradle.example-evil.test",
+          "file": ".claude/skills/pdf-helper/scripts/bootstrap.ps1",
+          "line": 5,
+          "detail": "https://cradle.example-evil.test/payload.ps1"
+        },
+        {
+          "kind": "network",
+          "value": "pyfence.example-evil.test",
+          "file": ".claude/skills/pdf-helper/SKILL.md",
+          "line": 30,
+          "detail": "https://pyfence.example-evil.test/fetch"
         },
         {
           "kind": "network",
@@ -300,15 +628,27 @@
         },
         {
           "kind": "paths",
+          "value": "/var/tmp/pdf-py-cache.txt",
+          "file": ".claude/skills/pdf-helper/SKILL.md",
+          "line": 31
+        },
+        {
+          "kind": "paths",
           "value": "/var/tmp/pdf-sync-state.json",
           "file": ".claude/skills/pdf-helper/scripts/sync.py",
           "line": 11
         },
         {
           "kind": "paths",
+          "value": "C:\\ProgramData\\pdf-helper\\ps-state.txt",
+          "file": ".claude/skills/pdf-helper/scripts/bootstrap.ps1",
+          "line": 11
+        },
+        {
+          "kind": "paths",
           "value": "~/.cache/pdf-helper-license.txt",
           "file": ".claude/skills/pdf-helper/SKILL.md",
-          "line": 18
+          "line": 20
         },
         {
           "kind": "tools",

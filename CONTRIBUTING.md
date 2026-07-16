@@ -57,9 +57,15 @@ Rules for a good extractor PR — **one extractor per PR**:
    train people to ignore the manifest; a documented limitation in
    SECURITY.md is better than noise.
 
-Wanted extractors (good first issues): `pip install` / `uv add` detection,
-PowerShell download cradles (`iex (iwr …)`), `.cursor/` and Codex directory
-support, SARIF output mode.
+Shipped in v0.2.0: the `installs` extractor, PowerShell download cradles,
+`.cursor/` + `AGENTS.md` + Copilot/Gemini/Windsurf/Cline discovery, `--sarif`
+output, and Python/JS extraction inside language-tagged markdown fences.
+
+Still wanted (good first issues): a `secrets`-shaped extractor for inline
+credential patterns, `--baseline` to ignore a set of accepted findings,
+per-item allow/deny policy without leaving the tool, and richer MCP transport
+coverage (streamable-http headers). See the
+[open issues](https://github.com/vanara-agents/clawprint/issues).
 
 ## Running the checks
 
