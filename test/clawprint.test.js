@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import {
   buildReport, scanDir, discoverItems, renderJson, renderMarkdown, renderSarif,
   compareReports, extractFences, EXTRACTORS, selftest,
-  buildWeighReport, frontmatterDescription,
+  buildWeighReport, frontmatterDescription, weighDir, attachSessionTotals,
   MANIFEST_JSON, MANIFEST_MD, VERSION,
 } from '../clawprint.mjs';
 
@@ -688,4 +688,78 @@ test('weigh CLI: flag validation', () => {
   assert.equal(runCli(['weigh', '--top', '-1']).status, 2);
   assert.equal(runCli(['--brief']).status, 2, '--brief outside weigh rejected');
   assert.equal(runCli(['check', '--budget', '5']).status, 2, '--budget outside weigh rejected');
+  assert.equal(runCli(['--global']).status, 2, '--global outside weigh rejected');
+});
+
+// A fake ~/.claude laid out in the global ('.') layout: config sits directly
+// under the home dir (skills/, agents/, CLAUDE.md), not under a nested .claude/.
+function makeGlobalHome() {
+  const home = mkdtempSync(join(tmpdir(), 'clawprint-home-'));
+  writeFileSync(join(home, 'CLAUDE.md'), 'global memory, always loaded\n'.repeat(4));
+  mkdirSync(join(home, 'skills', 'g1'), { recursive: true });
+  writeFileSync(join(home, 'skills', 'g1', 'SKILL.md'),
+    '---\nname: g1\ndescription: a global skill description\n---\nglobal skill body text\n');
+  mkdirSync(join(home, 'agents'), { recursive: true });
+  writeFileSync(join(home, 'agents', 'g-agent.md'),
+    '---\nname: g-agent\ndescription: a global agent description\n---\nglobal agent body\n');
+  return home;
+}
+
+test('weigh --global: session total is global + project always-loaded', () => {
+  const home = makeGlobalHome();
+  const project = mkdtempSync(join(tmpdir(), 'clawprint-proj-'));
+  try {
+    writeFileSync(join(project, 'CLAUDE.md'), 'project memory\n'.repeat(3));
+    const report = weighDir(project);
+    const projectAlways = report.always.tokens;
+    attachSessionTotals(report, project, home);
+
+    assert.ok(report.global, 'global tier attached');
+    assert.ok(report.global.always.tokens > 0, 'global always-loaded is non-zero');
+    assert.equal(report.session.projectAlwaysTokens, projectAlways, 'project total unchanged');
+    assert.equal(report.session.globalAlwaysTokens, report.global.always.tokens);
+    // total derives from summed exact chars, not summed rounded tokens
+    assert.equal(
+      report.session.totalChars,
+      report.session.globalAlwaysChars + report.session.projectAlwaysChars,
+    );
+    assert.equal(report.session.totalTokens, Math.round(report.session.totalChars / 4));
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(project, { recursive: true, force: true });
+  }
+});
+
+test('weigh --global: scanning ~/.claude itself is not double-counted', () => {
+  const home = makeGlobalHome();
+  try {
+    // project === home: the global tier must zero out so its always-loaded
+    // config is not counted once as project and again as global.
+    const report = weighDir(home);
+    attachSessionTotals(report, home, home);
+    assert.equal(report.global.always.tokens, 0, 'global zeroed when project is home');
+    assert.equal(report.session.totalTokens, report.session.projectAlwaysTokens);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('weigh --global CLI: --brief and --json expose the per-session total', () => {
+  // Uses the real ~/.claude; only asserts shape/keys, not machine-specific counts.
+  const brief = runCli(['weigh', '--global', '--brief', '--dir', SPICY]);
+  assert.equal(brief.status, 0);
+  assert.equal(brief.stdout.trim().split('\n').length, 1, 'brief is a single line');
+  assert.match(brief.stdout, /^clawprint weigh: ~[\d,]+ tokens\/session \(global ~[\d,]+ \+ project ~[\d,]+;/);
+
+  const j = JSON.parse(runCli(['weigh', '--global', '--json', '--dir', SPICY]).stdout);
+  assert.ok(j.global && j.global.always, 'global tier present in JSON');
+  assert.ok(j.session, 'session totals present in JSON');
+  assert.equal(
+    j.session.totalTokens,
+    Math.round((j.session.globalAlwaysChars + j.session.projectAlwaysChars) / 4),
+  );
+  // --budget with --global gates on the per-session total
+  const over = runCli(['weigh', '--global', '--budget', '0', '--dir', SPICY]);
+  assert.equal(over.status, 1, 'zero budget exceeded by any per-session cost');
+  assert.match(over.stdout, /budget 0 tokens \(per session\): EXCEEDED/);
 });
