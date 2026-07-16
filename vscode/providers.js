@@ -92,6 +92,39 @@ class CapabilitiesProvider extends BaseProvider {
   }
 }
 
+/**
+ * Token Usage: the headline per-session total, split into the global (~/.claude)
+ * and project (this repo) always-loaded tiers. Populated from report.session,
+ * which the extension requests with `weigh --global`.
+ */
+class SessionProvider extends BaseProvider {
+  getChildren(element) {
+    if (element) return element._children ?? [];
+    const w = this.snapshot?.weigh;
+    if (!w) return [];
+    const s = w.session;
+    const row = (label, chars, tokens, icon, tooltip) =>
+      item(label, { description: `${fmt(chars)} chars · ~${fmt(tokens)} tok`, icon, tooltip });
+
+    // Fallback for a CLI too old to emit report.session: show project always only.
+    if (!s) {
+      return [row(`Project — ~${fmt(w.always.tokens)} tokens/session`, w.always.chars, w.always.tokens, 'flame')];
+    }
+    return [
+      row(`Per session — ~${fmt(s.totalTokens)} tokens`, s.totalChars, s.totalTokens, 'law',
+        'Total context every session starts with: global + this project (before your first prompt)'),
+      row(`Global (~/.claude)`, s.globalAlwaysChars, s.globalAlwaysTokens, 'globe',
+        'CLAUDE.md + skill/agent/command descriptions loaded into every session, every project'),
+      row(`Project (this repo)`, s.projectAlwaysChars, s.projectAlwaysTokens, 'repo',
+        "This workspace's CLAUDE.md + skill/agent/command descriptions"),
+      item('SessionStart hooks & MCP servers can add more at runtime — not measured', {
+        icon: 'info',
+        tooltip: 'Hooks that emit context and MCP tool schemas load at runtime and cannot be measured by a static scan',
+      }),
+    ];
+  }
+}
+
 /** Context Weight: tier → entries, chars exact + ~token estimates. */
 class WeighProvider extends BaseProvider {
   getChildren(element) {
@@ -104,9 +137,16 @@ class WeighProvider extends BaseProvider {
 
     tiers.push(item(`Always loaded — ~${fmt(w.always.tokens)} tokens/session`, {
       icon: 'flame',
-      tooltip: 'Injected into every session before your first prompt',
+      tooltip: 'Injected into every session before your first prompt (this project)',
       children: w.always.entries.map((e) => row(e.label, e.chars, e.tokens, 'pulse')),
     }));
+    if (w.global) {
+      tiers.push(item(`Global — ~${fmt(w.global.always.tokens)} tokens/session (~/.claude)`, {
+        icon: 'globe',
+        tooltip: 'Loaded into every session in every project, from your ~/.claude config',
+        children: w.global.always.entries.map((e) => row(e.label, e.chars, e.tokens, 'pulse')),
+      }));
+    }
     if (w.invoke.items.length) {
       tiers.push(item(`On invoke — ${w.invoke.items.length} items, ~${fmt(w.invoke.tokens)} tokens total`, {
         icon: 'play',
@@ -168,4 +208,4 @@ class CheckProvider extends BaseProvider {
   }
 }
 
-module.exports = { CapabilitiesProvider, WeighProvider, CheckProvider, fmt };
+module.exports = { SessionProvider, CapabilitiesProvider, WeighProvider, CheckProvider, fmt };

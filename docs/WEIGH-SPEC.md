@@ -34,12 +34,38 @@ Files are grouped by *when* their content enters the context window:
 
 Binary files in `reference` are listed by exact bytes with no token estimate.
 
+### Global tier & per-session total (`--global`)
+
+A project's `.claude/` is only part of the tax. The user's global `~/.claude`
+config (its own CLAUDE.md + skill/agent/command descriptions) loads into
+*every* session in *every* project, and is usually the larger share.
+
+`--global` re-runs the same `always`-tier accounting against `~/.claude` (using
+a "config sits directly under the root" layout instead of a nested `.claude/`)
+and attaches two fields to the report:
+
+- `global` — the `always`/`invoke` tiers computed for `~/.claude`.
+- `session` — `{ globalAlwaysChars/Tokens, projectAlwaysChars/Tokens,
+  totalChars, totalTokens }`, where `total = global.always + project.always`.
+  `totalTokens` derives from summed exact **chars** (÷ 4), never from summing
+  rounded per-tier token figures.
+
+When the scanned project *is* `~/.claude`, the global tier is zeroed so the same
+config is not counted once as project and again as global.
+
+Deliberately **not** counted: plugin- or hook-injected context. A SessionStart
+hook that emits rules at runtime (e.g. stack-conditional rule files) chooses its
+payload at runtime — a static scan that summed the whole `rules/` tree would
+over-report every language the user never loads. `weigh` flags this as
+not-measurable rather than manufacturing a number.
+
 ## CLI
 
 ```
 npx clawprint weigh              full report to stdout (writes no files)
 npx clawprint weigh --top 10    show 10 heaviest invoke/reference items (default 5)
-npx clawprint weigh --budget N  exit 1 if the always-tier estimate exceeds N tokens
+npx clawprint weigh --global    add the ~/.claude tier + total tokens per session
+npx clawprint weigh --budget N  exit 1 if the estimate exceeds N tokens (per-session with --global)
 npx clawprint weigh --brief     one line — made for hooks and statuslines
 npx clawprint weigh --json      machine-readable report
 ```

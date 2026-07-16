@@ -28,7 +28,17 @@ function runCli(context, workspaceRoot, args) {
     execFile(
       process.execPath,
       [cli, ...args],
-      { cwd: workspaceRoot, maxBuffer: 64 * 1024 * 1024, windowsHide: true },
+      {
+        cwd: workspaceRoot,
+        maxBuffer: 64 * 1024 * 1024,
+        windowsHide: true,
+        // In the desktop extension host process.execPath is the Electron
+        // (Code.exe) binary, not node. Without this it launches a GUI window
+        // instead of running the script, so stdout is empty and every report
+        // parses to null (silent, error-free empty views). This makes Electron
+        // execute as node; real-node hosts ignore it.
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      },
       (error, stdout, stderr) => {
         if (error && error.code === undefined) return reject(error); // spawn failure, not exit code
         resolvePromise({ code: error ? error.code : 0, stdout, stderr });
@@ -42,7 +52,8 @@ async function snapshot(context, workspaceRoot) {
   const dirArgs = ['--dir', workspaceRoot];
   const [scan, weigh, check] = await Promise.all([
     runCli(context, workspaceRoot, ['--json', ...dirArgs]),
-    runCli(context, workspaceRoot, ['weigh', '--json', ...dirArgs]),
+    // --global adds the ~/.claude tier and the per-session total (report.session)
+    runCli(context, workspaceRoot, ['weigh', '--json', '--global', ...dirArgs]),
     runCli(context, workspaceRoot, ['check', ...dirArgs]),
   ]);
   const parseOr = (res, fallback) => {

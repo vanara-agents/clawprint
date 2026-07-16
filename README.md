@@ -182,10 +182,28 @@ groups every file by *when* it enters the context window:
 - **Referenced files** — `references/`, `scripts/` etc., only if the agent
   reads them.
 
+But a project's own `.claude/` is only half the tax. Your **global**
+`~/.claude` config — the CLAUDE.md and skill/agent/command descriptions that
+ride along in *every* project — is usually the larger share. `--global` adds
+that tier and prints the **total tokens per session**:
+
+```bash
+npx clawprint weigh --global
+```
+
+```
+TOKEN USAGE — total context every session starts with
+  global (~/.claude)                              27,800 chars   ~6,950 tokens
+  project (this repo)                                  0 chars       ~0 tokens
+  per session (total)                             27,800 chars   ~6,950 tokens
+```
+
 Character counts are exact; token figures are labeled estimates (chars ÷ 4)
 derived from them. What can't be measured offline is said, not guessed: MCP
-tool schemas load at runtime from the servers, hook commands run as shell.
-No verdicts — the only pass/fail is the budget *you* set:
+tool schemas load at runtime from the servers, and hook commands run as shell
+— including SessionStart hooks that *emit* context, whose runtime output a
+static scan can't attribute. No verdicts — the only pass/fail is the budget
+*you* set (with `--global`, it gates the per-session total):
 
 ```bash
 npx clawprint weigh --budget 15000    # exit 1 if the always-loaded estimate exceeds it
@@ -216,6 +234,7 @@ npx clawprint check            # rescan → compare to committed manifest → ex
 npx clawprint diff             # alias of check
 npx clawprint weigh            # estimated context cost: always / on-invoke / referenced tiers
 npx clawprint weigh --top 10   # list the 10 heaviest items per tier (default 5)
+npx clawprint weigh --global   # add the ~/.claude tier + total tokens per session
 npx clawprint weigh --budget N # exit 1 if the always-loaded estimate exceeds N tokens
 npx clawprint weigh --brief    # one line, made for SessionStart hooks
 npx clawprint --dir <path>     # scan a different root (works with all modes)
