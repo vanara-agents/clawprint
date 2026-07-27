@@ -688,7 +688,10 @@ test('weigh CLI: flag validation', () => {
   assert.equal(runCli(['weigh', '--top', '-1']).status, 2);
   assert.equal(runCli(['--brief']).status, 2, '--brief outside weigh rejected');
   assert.equal(runCli(['check', '--budget', '5']).status, 2, '--budget outside weigh rejected');
-  assert.equal(runCli(['--global']).status, 2, '--global outside weigh rejected');
+  // --global is now valid in scan/check/policy (operates on ~/.claude); it
+  // stays invalid where a global scope has no meaning.
+  assert.equal(runCli(['badge', '--global']).status, 2, '--global rejected in badge mode');
+  assert.equal(runCli(['fleet', '--global']).status, 2, '--global rejected in fleet mode');
 });
 
 // A fake ~/.claude laid out in the global ('.') layout: config sits directly

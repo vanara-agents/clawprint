@@ -1,7 +1,7 @@
 // Tests for the 0.4.0 feature set: policy, guard, history, fleet, badge.
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -122,6 +122,77 @@ describe('history', () => {
 
   test('empty history renders a hint, not a crash', () => {
     assert.match(renderHistoryLog([]), /no history yet/);
+  });
+});
+
+describe('gap wave 0.5.0', () => {
+  test('symlink escape becomes a symlinks finding', (t) => {
+    const root = mkdtempSync(join(tmpdir(), 'cp-sym-'));
+    try {
+      mkdirSync(join(root, 'proj', '.claude', 'skills'), { recursive: true });
+      mkdirSync(join(root, 'outside'), { recursive: true });
+      writeFileSync(join(root, 'outside', 'SKILL.md'), '---\nname: sneaky\n---\nbody\n');
+      try {
+        symlinkSync(join(root, 'outside'), join(root, 'proj', '.claude', 'skills', 'sneaky'), 'junction');
+      } catch { t.skip('symlinks unavailable'); return; }
+      const rep = scanDir(join(root, 'proj'));
+      const item = rep.items.find((i) => i.id === 'skills/sneaky');
+      assert.ok(item, 'item scanned');
+      const sym = item.findings.filter((fd) => fd.kind === 'symlinks');
+      assert.equal(sym.length, 1);
+      assert.match(sym[0].value, /outside/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('guard v2: WebFetch host checked against manifest + policy', () => {
+    const manifest = report([f('network', 'api.github.com')]);
+    const ok = { tool_name: 'WebFetch', tool_input: { url: 'https://api.github.com/repos' } };
+    assert.equal(guardDecision(ok, manifest, null).verdict, 'allow');
+    const bad = { tool_name: 'WebFetch', tool_input: { url: 'https://exfil.evil.test/x' } };
+    const d = guardDecision(bad, manifest, null, { enforce: true });
+    assert.equal(d.verdict, 'block');
+    assert.ok(d.reasons.some((r) => r.includes('WebFetch')));
+    // policy applies even with no manifest
+    const p = guardDecision(bad, null, { network: { allow: ['api.github.com'] } });
+    assert.equal(p.verdict, 'warn');
+  });
+
+  test('guard v2: writes outside the project are flagged; declared targets pass', () => {
+    const projectDir = tmpdir(); // any real dir
+    const outside = join(projectDir, '..', 'somewhere-else', 'x.txt');
+    const bad = { tool_name: 'Write', tool_input: { file_path: outside } };
+    const d = guardDecision(bad, report([]), null, { projectDir });
+    assert.equal(d.verdict, 'warn');
+    assert.ok(d.reasons[0].includes('write outside project'));
+    // inside the project → allow
+    const inside = { tool_name: 'Write', tool_input: { file_path: join(projectDir, 'ok.txt') } };
+    assert.equal(guardDecision(inside, report([]), null, { projectDir }).verdict, 'allow');
+    // manifest-declared outside target (prefix match) → allow
+    const declared = report([f('paths', join(projectDir, '..', 'somewhere-else'))]);
+    assert.equal(guardDecision(bad, declared, null, { projectDir }).verdict, 'allow');
+  });
+
+  test('guard v2: unions project + global manifests', () => {
+    const project = report([f('network', 'a.test')]);
+    const global = report([f('network', 'b.test')]);
+    const ev = (host) => ({ tool_name: 'Bash', tool_input: { command: `curl https://${host}/x` } });
+    assert.equal(guardDecision(ev('b.test'), [project, global], null).verdict, 'allow');
+    assert.equal(guardDecision(ev('c.test'), [project, global], null).verdict, 'warn');
+  });
+
+  test('policy v2: tools.deny, installs.allow, symlinks:false', () => {
+    const r = report([f('tools', 'Bash'), f('installs', 'left-pad'), f('installs', 'evil-pkg'), f('symlinks', '/outside/SKILL.md')]);
+    const v = evaluatePolicy(r, {
+      tools: { deny: ['Bash'] },
+      installs: { allow: ['left-pad'] },
+      symlinks: false,
+    });
+    assert.deepEqual(v.map((x) => `${x.kind}:${x.value}`).sort(), [
+      'installs:evil-pkg', 'symlinks:/outside/SKILL.md', 'tools:Bash',
+    ]);
+    assert.ok(v.find((x) => x.kind === 'installs').rule.includes('allowlist'));
   });
 });
 

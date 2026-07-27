@@ -103,6 +103,7 @@ jobs:
 | `env` | which secrets and settings it reads | `env: GITHUB_TOKEN` |
 | `paths` | where it writes files **outside** your project | `paths: ~/.ssh/config` |
 | `opaque` | content no human can eyeball — encoded blobs, invisible characters | `opaque: base64(140) Y2xhd3ByaW50…` |
+| `symlinks` | config whose real content lives **outside** your repo (it can change with no diff here) | `symlinks: /home/x/elsewhere/SKILL.md` |
 | `hash` | a fingerprint of every file, so *any* edit at all is detectable | `sha256:fa8855…` |
 
 ### Where it looks
@@ -138,7 +139,11 @@ rules file in your repo and `check` enforces it:
 Translation: *"my AI setup may only talk to GitHub and our own servers, may
 never read cloud keys or secrets, and may never install software at
 runtime."* Anything that breaks a rule fails the check with a `!` line naming
-the rule — even if it was in the config all along.
+the rule — even if it was in the config all along. Also available:
+`tools: {"deny": ["Bash"]}` (no skill may get shell), `installs: {"allow":
+[...]}` (allowlist instead of on/off), and `"symlinks": false` (no config
+sourced from outside the repo). Preview what a policy would flag *before*
+committing it: `npx clawprint policy` (add `--json` for tooling).
 
 **Live protection — `clawprint guard`.** The check runs at review time; guard
 runs at the moment the AI is *about to execute a command*. Hook it into
@@ -153,7 +158,17 @@ first — a command reaching for a website that's not on the list gets flagged
 ```
 
 It fails open by design: no manifest → it warns and allows. A guard that
-bricks your session gets uninstalled, not fixed.
+bricks your session gets uninstalled, not fixed. Guard watches more than
+shell: **WebFetch** URLs are checked against your allowed hosts, and **file
+writes outside your project** are flagged unless the manifest already
+declares that target. It also honors your *global* manifest (below), so
+globally installed skills don't trip false alarms.
+
+**Don't forget the machine-wide config — `--global`.** A skill installed in
+`~/.claude` grants its capabilities in **every** project, yet appears in no
+repo's manifest. `npx clawprint --global` gives your global config a manifest
+of its own (written into `~/.claude/`), and `npx clawprint check --global`
+tells you when *it* changes — the blind spot most setups never look at.
 
 **The story over time — `clawprint log`.** Scan with `--history` and each
 run appends a dated snapshot. `clawprint log` then shows how your setup's
