@@ -7,29 +7,26 @@
 
 </div>
 
-## What is this? 
+## The 30-second version
 
-If you use Claude Code, your project probably has a `.claude/` folder full of
-**skills, agents, commands and hooks** — plus an `.mcp.json` and a `CLAUDE.md`.
-Together they quietly decide what your AI assistant is *able to do*: which
-shell commands it can run, which websites it can talk to, which secrets it can
-read, where it can write files.
+If you use an AI coding assistant (Claude Code, Cursor, Copilot…), your project
+contains **instruction files that tell the AI what it's allowed to do** — which
+programs it can run, which websites it can contact, which passwords and keys it
+can read.
 
-Here's the uncomfortable part: **that folder changes over time**, and nobody
-reads every line of every "docs update" PR. One added `curl` to an unfamiliar
-host looks like nothing in a 400-line diff.
+Those files change over time. Teammates edit them, tools install into them,
+and nobody re-reads them. One sneaky line — say, an instruction to send data
+to an unfamiliar website — hides easily inside a big "docs update".
 
-**clawprint is a packing list for that folder.** Run it once and it writes a
-short, human-readable inventory — *"this setup can run `node` and `curl`,
-reach `api.example.com`, read `GITHUB_TOKEN`"* — that you commit next to your
-code. From then on, any PR that changes what your agent setup **can do** shows
-up as a one-line diff a reviewer can't miss, and a CI check goes red until
-someone consciously approves it.
+**clawprint is a smoke detector for those files.** It writes down, in plain
+English, everything your AI setup is currently able to do — and from then on,
+**any change to that list sets off the alarm** before it reaches your main
+branch. A human looks, says "yes I meant that" or "no, what is THIS?", and
+life goes on.
 
-No AI, no cloud, no judgment calls. It never says "malicious" — it says
-*"this skill can now reach a new host"* and lets a human decide. Same input
-always produces byte-identical output, so the diffs are clean and it runs
-fully offline.
+It's one small file of code. No AI inside, no cloud, nothing leaves your
+machine, and it never renders verdicts — it just tells you *what changed* and
+lets you decide.
 
 <div align="center">
 <img src="docs/assets/demo.svg" alt="Terminal demo: clawprint scans the project and writes the manifest; weeks later, clawprint check fails a PR that quietly added a new network host to a skill" width="900">
@@ -37,40 +34,50 @@ fully offline.
 
 ## Use it in 3 steps
 
-**Step 1 — take the inventory** (in your project folder):
+**Step 1 — take the inventory.** In your project folder, run:
 
 ```bash
 npx clawprint
 ```
 
-This writes two files: `CLAWPRINT.md` (the readable inventory) and
-`.clawprint.json` (the machine version). It changes nothing else and never
-touches the network.
+This writes two small files: `CLAWPRINT.md` (a readable list of what your AI
+setup can do — open it, it's meant for humans) and `.clawprint.json` (the same
+thing for machines). It changes nothing else and never touches the internet.
 
-**Step 2 — commit them**, like a lockfile:
+**Step 2 — save the inventory with your code:**
 
 ```bash
 git add CLAWPRINT.md .clawprint.json
 git commit -m "add capability manifest"
 ```
 
-**Step 3 — check for changes** (in CI, or any time you're suspicious):
+Think of it like the packing list taped to a moving box: now there's a record
+of what's supposed to be inside.
+
+**Step 3 — check the box whenever anything changes:**
 
 ```bash
 npx clawprint check
 ```
 
-- Nothing changed → exits 0, says so, everyone moves on.
-- Something **new** appeared (a host, a command, an env var…) → exits 1 and
-  prints exactly what, like `+ [skills/pdf-helper] network: api.pastebin-mirror.test`.
-- To accept an intended change: rerun `npx clawprint`, commit the updated
-  manifest, and the diff shows reviewers exactly what was approved.
+- Nothing changed → it says so and exits quietly.
+- Something **new** appeared — a website, a program, a secret being read —
+  → it fails loudly and prints exactly what, like:
+  `+ [skills/pdf-helper] network: api.pastebin-mirror.test`
+  (translation: *"the pdf-helper skill can now talk to a website it couldn't
+  talk to before"*).
+- If the change was intentional: rerun `npx clawprint`, commit the updated
+  list, and your reviewers see exactly what was approved.
 
 <div align="center">
 <img src="docs/assets/how-it-works.svg" alt="How it works: your .claude directory is scanned into one committed manifest, and every capability change becomes a visible PR diff plus a CI check" width="900">
 </div>
 
-### Add the CI gate (copy-paste)
+### Make it automatic (recommended)
+
+Paste this into `.github/workflows/agent-config.yml` and GitHub will run the
+check on every pull request that touches your AI config — no one has to
+remember anything:
 
 ```yaml
 name: agent-config
@@ -85,110 +92,42 @@ jobs:
       - uses: vanara-agents/clawprint@main
 ```
 
-### No npm required
-
-The whole tool is one stdlib-only file, so the npm registry is a convenience,
-not a dependency. All of these work with nothing but Node ≥ 20:
-
-```bash
-# run straight from GitHub via npx (git fetch, no registry)
-npx github:vanara-agents/clawprint
-
-# or download the single file and run it — that's the entire tool
-curl -fsSL https://raw.githubusercontent.com/vanara-agents/clawprint/main/clawprint.mjs -o clawprint.mjs
-node clawprint.mjs
-
-# or clone it
-git clone https://github.com/vanara-agents/clawprint && node clawprint/clawprint.mjs
-```
-
-The GitHub Action never touches npm either — it runs the checked-out file
-directly. Vendoring `clawprint.mjs` into your repo means you can read every
-line of what you're trusting first, which is rather the point.
-
-Don't take the README's word for any of this — run the bundled fixture tests
-yourself:
-
-```bash
-npx clawprint --selftest
-```
-
 ## What it looks for
 
-| It reports… | …in plain terms | Example finding |
+| It reports… | …meaning | Example finding |
 |---|---|---|
-| `tools` | which built-in tools a skill/agent is granted | `tools: Bash, WebFetch` |
-| `commands` | which programs it can run | `commands: curl, node` |
-| `installs` | which packages it installs at runtime | `installs: requests, colorama` |
-| `network` | which hosts it can reach (incl. PowerShell download cradles) | `network: api.example.test` |
-| `env` | which secrets/variables it reads | `env: GITHUB_TOKEN` |
-| `paths` | where it writes **outside** your project | `paths: ~/.ssh/config` |
-| `opaque` | content a human can't eyeball — long base64/hex blobs, invisible unicode | `opaque: base64(140) Y2xhd3ByaW50…` |
-| `hash` | a fingerprint of every file, so *any* edit is detectable | `sha256:fa8855…` |
+| `tools` | which built-in abilities the AI is granted | `tools: Bash, WebFetch` |
+| `commands` | which programs it can run on your computer | `commands: curl, node` |
+| `installs` | which software it installs while running | `installs: requests, colorama` |
+| `network` | which websites/servers it can contact | `network: api.example.test` |
+| `env` | which secrets and settings it reads | `env: GITHUB_TOKEN` |
+| `paths` | where it writes files **outside** your project | `paths: ~/.ssh/config` |
+| `opaque` | content no human can eyeball — encoded blobs, invisible characters | `opaque: base64(140) Y2xhd3ByaW50…` |
+| `hash` | a fingerprint of every file, so *any* edit at all is detectable | `sha256:fa8855…` |
 
-### What it scans
+### Where it looks
 
-Everything agent-shaped under your project root — and not just Claude:
+Everything agent-shaped in your project — not just Claude:
 
-- **Claude Code** — `.claude/skills/**`, `.claude/agents/**`,
-  `.claude/commands/**`, `.claude/settings.json` + `settings.local.json`
-  (hooks and permissions), `CLAUDE.md` / `CLAUDE.local.md`
-- **MCP** — `.mcp.json` and `.cursor/mcp.json` (server commands and URLs)
-- **Cursor** — `.cursor/rules/*.mdc` and legacy `.cursorrules`
-- **Codex / cross-tool** — `AGENTS.md`
-- **Gemini CLI** — `GEMINI.md`
+- **Claude Code** — `.claude/` (skills, agents, commands, hooks, settings), `CLAUDE.md`
+- **MCP** — `.mcp.json`, `.cursor/mcp.json` (which servers, which URLs)
+- **Cursor** — `.cursor/rules/*.mdc`, legacy `.cursorrules`
+- **Codex / cross-tool** — `AGENTS.md` · **Gemini CLI** — `GEMINI.md`
 - **GitHub Copilot** — `.github/copilot-instructions.md`
 - **Windsurf / Cline** — `.windsurfrules`, `.clinerules`
 
-Missing files are fine — they just produce no items. Code blocks tagged
-` ```python ` / ` ```js ` inside any of these get the same Python/JS
-extraction as real script files. Files clawprint can't read as text
-(binaries, oversized) are still fingerprinted **and** flagged — nothing is
-silently skipped.
+Files that are missing are fine. Files it can't read as text are still
+fingerprinted **and** flagged — nothing gets silently skipped.
 
-## Why not just a scanner or a lockfile?
+## Also: what does your setup *cost*?
 
-The agent-config trust space has three occupied niches and one that was empty:
-
-| Niche | Question it answers | Examples |
-|---|---|---|
-| Security scanners | "Is this skill malicious?" (verdicts at install time) | snyk/agent-scan, ai-skill-scanner |
-| Content lockfiles | "Did the bytes change?" | skills-lock |
-| Eval harnesses | "Does this skill improve output?" | skill-eval-harness, skillcheck |
-| **Capability manifest + diff** | **"What can my setup DO, and what did this PR change about that?"** | **clawprint** |
-
-A skill that adds one `curl` to a new host in an innocent-looking "docs
-update" PR sails through every content-hash tool — the hash is simply
-regenerated with the PR. Scanners judge once, at install time; nothing watches
-**change-over-time at the capability level**. That's clawprint's job.
-
-## Weigh: what does your setup cost?
-
-Capabilities are one inventory question. The other: **how much context does
-this folder inject, every single session?** Agent configs accrete — CLAUDE.md
-grows, skills multiply — and the cost stays invisible until sessions feel
-slow or hit limits.
+Every session, your AI reads some of these instruction files before you type a
+single word. That reading costs **tokens** — the currency AI usage is billed
+and rate-limited in. Configs grow quietly; the bill grows with them.
 
 ```bash
-npx clawprint weigh
-```
-
-groups every file by *when* it enters the context window:
-
-- **Always loaded** — CLAUDE.md + each skill/agent/command's frontmatter
-  `description` (its listing entry). This is the tax on every session,
-  before your first prompt.
-- **Loaded on invoke** — the item's own `.md` body, only when it's used.
-- **Referenced files** — `references/`, `scripts/` etc., only if the agent
-  reads them.
-
-But a project's own `.claude/` is only half the tax. Your **global**
-`~/.claude` config — the CLAUDE.md and skill/agent/command descriptions that
-ride along in *every* project — is usually the larger share. `--global` adds
-that tier and prints the **total tokens per session**:
-
-```bash
-npx clawprint weigh --global
+npx clawprint weigh            # what does this project's config cost per session?
+npx clawprint weigh --global   # include your machine-wide ~/.claude config too
 ```
 
 ```
@@ -198,33 +137,59 @@ TOKEN USAGE — total context every session starts with
   per session (total)                             27,800 chars   ~6,950 tokens
 ```
 
-Character counts are exact; token figures are labeled estimates (chars ÷ 4)
-derived from them. What can't be measured offline is said, not guessed: MCP
-tool schemas load at runtime from the servers, and hook commands run as shell
-— including SessionStart hooks that *emit* context, whose runtime output a
-static scan can't attribute. No verdicts — the only pass/fail is the budget
-*you* set (with `--global`, it gates the per-session total):
+It splits the cost into what's loaded **always**, what's loaded **only when a
+skill is used**, and what's loaded **only if the AI opens a reference file** —
+so you know what to trim first. Character counts are exact; token figures are
+labeled estimates. You can set a budget and fail CI when config bloat crosses
+it:
 
 ```bash
-npx clawprint weigh --budget 15000    # exit 1 if the always-loaded estimate exceeds it
+npx clawprint weigh --budget 15000    # alarm if the always-loaded cost exceeds this
 ```
 
-That's the CI gate for context bloat, the same way `check` gates
-capabilities. And `--brief` makes it a one-line
-[SessionStart hook](docs/recipes.md), so every session opens by telling you
-what it's carrying:
-
-```json
-{ "hooks": { "SessionStart": [ { "hooks": [
-  { "type": "command", "command": "npx clawprint weigh --brief" }
-] } ] } }
-```
-
-What weigh will **not** do: predict how many tokens a specific answer will
-consume, or promise that a given skill "saves tokens" on a given prompt.
-That depends on model behavior at runtime — a deterministic tool printing
-such a number would be manufacturing false precision. Design details in
+What weigh will **not** do: predict what a specific conversation will cost, or
+claim a skill "saves tokens". That depends on the model at runtime, and a
+static tool printing such a number would be making it up. Details in
 [docs/WEIGH-SPEC.md](docs/WEIGH-SPEC.md).
+
+## Don't trust us — you don't have to
+
+The entire tool is **one file with zero dependencies**. You can read every
+line of what you're trusting before you run it:
+
+```bash
+# run without the npm registry at all (fetches from GitHub)
+npx github:vanara-agents/clawprint
+
+# or just download the one file and run it — that's the whole tool
+curl -fsSL https://raw.githubusercontent.com/vanara-agents/clawprint/main/clawprint.mjs -o clawprint.mjs
+node clawprint.mjs
+```
+
+And it checks itself — bundled fixture tests you can run any time:
+
+```bash
+npx clawprint --selftest
+```
+
+Same input always produces byte-identical output on every OS (no timestamps,
+everything sorted, line-endings normalized) — which is why the committed
+inventory produces clean, readable git diffs. CI enforces this on Ubuntu and
+Windows for every push.
+
+## How it compares
+
+| Kind of tool | Question it answers |
+|---|---|
+| Security scanners | "Is this skill malicious?" — a verdict, once, at install time |
+| Content lockfiles | "Did the bytes change?" — yes/no, no meaning attached |
+| Eval harnesses | "Does this skill improve output?" |
+| **clawprint** | **"What can my setup DO — and what did this change add?"** |
+
+The gap it fills: a skill that adds one `curl` to a new host in an innocent
+"docs update" sails through every hash-based tool (the hash just gets
+regenerated) and past any scanner that already ran at install time. Nothing
+was watching **change-over-time at the what-can-it-do level**. That's the job.
 
 ## CLI reference
 
@@ -244,60 +209,42 @@ npx clawprint --selftest       # run bundled fixture tests, exit 0/1
 npx clawprint check --allow-content-drift   # content-only changes become a note, not a failure
 ```
 
-More ways to use it — pre-install trust checks, policy gates (allowlist hosts,
-block cloud-cred reads, forbid runtime installs), PR-comment bots, SARIF
-upload, capability forensics with `git bisect`, and org-wide inventory — are
-in **[docs/recipes.md](docs/recipes.md)**.
-
-**`check` semantics** (the CI gate):
-
-- **New capability** (host, command, env var, tool grant, outside write, opaque
-  block, or whole item) → **exit 1**, printed as `+ [skills/foo] network: api.evil.test`
-- **Removed capability** → exit 0, printed as `- …` (removals are safe; still noted)
-- **Content-only change** (same capabilities, different bytes) → exit 1 by
-  default — the instructions changed even if capabilities didn't, and a reviewer
-  should glance. `--allow-content-drift` downgrades this to a note.
-- **No manifest committed yet** → exit 1 with instructions.
+**`check` semantics** (the CI gate): a **new** capability (host, command, env
+var, tool grant, outside write, opaque block, or whole item) fails the check;
+a **removed** one passes with a note (removals are safe); a **content-only**
+change (same abilities, different wording) fails by default — the instructions
+changed and a reviewer should glance — unless you pass
+`--allow-content-drift`. More patterns — policy gates, PR-comment bots,
+capability forensics with `git bisect`, org-wide inventory — live in
+**[docs/recipes.md](docs/recipes.md)**.
 
 ## In your editor (VS Code)
 
-Prefer a panel to a terminal? The **clawprint** sidebar shows the same picture
-live for the open workspace — **Capabilities**, **Context Weight**
-(`weigh --global`, so both the project and your `~/.claude` tiers), and the
-**Manifest Check** diff — and refreshes as you edit `.claude/`. It runs the
-same `clawprint` CLI under the hood, so the numbers match your CI exactly.
-
-The extension lives in [`vscode/`](vscode): `npm run package` there builds a
-`.vsix` you can install, or press F5 to launch the Extension Development Host.
-
-## Determinism
-
-Same input tree → byte-identical output, on every OS. No timestamps, sorted
-everything (codepoint order, never locale collation), CRLF and BOM normalized
-on read, `\n` on write. The committed manifest produces clean, reviewable git
-diffs — that's the whole point. CI enforces this on Ubuntu and Windows for
-every push.
+Prefer a panel to a terminal? The **clawprint** sidebar in [`vscode/`](vscode)
+shows the same picture live — capabilities, context weight (project + global),
+and the manifest-check diff — refreshing as you edit `.claude/`. It runs the
+same CLI underneath, so the numbers always match your CI.
 
 ## Honest limits
 
-Clawprint is static heuristics — grep with opinions, not a parser, not a
-sandbox, and **not a security scanner**:
+clawprint is pattern-matching with opinions — not a parser, not a sandbox,
+and **not a security scanner**:
 
-- A determined attacker can hide from regex (string-building at runtime,
-  encodings we don't decode, dynamic imports). The `opaque` extractor flags
-  the cheap tricks, not all of them.
-- It reports what config *says* it can do, not what the runtime will allow or
-  what an agent will actually decide to do.
+- A determined attacker can hide from patterns (building strings at runtime,
+  encodings it doesn't decode). The `opaque` detector catches the cheap
+  tricks, not all of them.
+- It reports what the config *says* it can do — not what the runtime will
+  permit, or what an AI will actually decide to do on a given day.
 - It doesn't judge. `network: api.example.test` might be your own API or an
   exfiltration endpoint — clawprint can't know, and doesn't pretend to.
 
-Pair it with a security scanner at install time. Clawprint's job is making
-**change visible in review**, not proving absence of malice. See
-[SECURITY.md](SECURITY.md) for the full threat-model discussion.
+Pair it with a security scanner at install time. clawprint's job is making
+**change visible to a human in review**, not proving the absence of malice.
+Full threat-model discussion in [SECURITY.md](SECURITY.md).
 
 ## Contributing
 
-Extractors are the contribution surface — each one is a single entry in the
+Extractors are the contribution surface — each is a single entry in the
 `EXTRACTORS` array with a fixture and a test. See
 [CONTRIBUTING.md](CONTRIBUTING.md) and the
 [good first issues](https://github.com/vanara-agents/clawprint/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22).
@@ -309,5 +256,5 @@ Apache-2.0.
 ---
 
 Built by [Vanara](https://vanaraagents.com) — verified agents & skills for
-Claude Code. Clawprint is the standalone version of the trust-step in
+Claude Code. clawprint is the standalone version of the trust-step in
 `npx vanara install`.
