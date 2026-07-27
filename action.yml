@@ -21,6 +21,13 @@ inputs:
     description: 'If "true", content-only changes (same capabilities, different bytes) are a note instead of a failure.'
     required: false
     default: 'false'
+  comment:
+    description: >-
+      If "true", post (and update in place) a PR comment with the capability
+      diff when the check fails. Needs `pull-requests: write` permission and a
+      pull_request event; silently skipped otherwise.
+    required: false
+    default: 'false'
 
 runs:
   using: 'composite'
@@ -33,6 +40,7 @@ runs:
     # template substitution into bash is a shell-injection vector when callers
     # feed untrusted event data (branch names, PR titles) into inputs.
     - name: clawprint check
+      id: check
       shell: bash
       env:
         INPUT_DIR: ${{ inputs.dir }}
@@ -42,4 +50,42 @@ runs:
         if [ "$INPUT_ALLOW_DRIFT" = "true" ]; then
           ARGS+=(--allow-content-drift)
         fi
-        node "${{ github.action_path }}/clawprint.mjs" "${ARGS[@]}"
+        set +e
+        node "${{ github.action_path }}/clawprint.mjs" "${ARGS[@]}" | tee clawprint-check.out
+        CODE=${PIPESTATUS[0]}
+        set -e
+        echo "exit=$CODE" >> "$GITHUB_OUTPUT"
+        exit "$CODE"
+
+    # The diff a reviewer can't miss: on failure, upsert ONE comment on the PR
+    # (found by its marker, edited in place — never a pile of duplicates).
+    # The body is passed to gh via -f (which JSON-encodes it); nothing from
+    # the diff is ever spliced into shell.
+    - name: comment capability diff on the PR
+      if: ${{ always() && inputs.comment == 'true' && steps.check.outputs.exit != '0' && github.event_name == 'pull_request' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        REPO: ${{ github.repository }}
+        PR: ${{ github.event.pull_request.number }}
+      run: |
+        MARKER="<!-- clawprint-capability-diff -->"
+        {
+          echo "$MARKER"
+          echo "### 🐾 clawprint: this PR changes what your agent setup can do"
+          echo
+          echo '```'
+          cat clawprint-check.out
+          echo '```'
+          echo
+          echo "If intended: run \`npx clawprint\` and commit the updated manifest so the change is on the record."
+        } > clawprint-comment.md
+        EXISTING=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+          --jq ".[] | select(.body | startswith(\"$MARKER\")) | .id" | head -1)
+        if [ -n "$EXISTING" ]; then
+          gh api -X PATCH "repos/$REPO/issues/comments/$EXISTING" -f body="$(cat clawprint-comment.md)" >/dev/null
+          echo "updated existing capability-diff comment ($EXISTING)"
+        else
+          gh api -X POST "repos/$REPO/issues/$PR/comments" -f body="$(cat clawprint-comment.md)" >/dev/null
+          echo "posted capability-diff comment"
+        fi

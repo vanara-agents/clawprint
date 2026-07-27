@@ -24,13 +24,13 @@
  * https://github.com/vanara-agents/clawprint
  */
 
-import { readFileSync, writeFileSync, readdirSync, statSync, existsSync, realpathSync } from 'node:fs';
+import { readFileSync, writeFileSync, appendFileSync, readdirSync, statSync, existsSync, realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
-export const VERSION = '0.3.0';
+export const VERSION = '0.4.0';
 export const MANIFEST_MD = 'CLAWPRINT.md';
 export const MANIFEST_JSON = '.clawprint.json';
 
@@ -1491,6 +1491,261 @@ export function selftest() {
 }
 
 // ---------------------------------------------------------------------------
+// Policy — declarative allow/deny rules, enforced by `check` (and `guard`).
+// The manifest says what the setup CAN do; the policy says what it MAY do.
+// ---------------------------------------------------------------------------
+
+export const POLICY_FILE = 'clawprint.policy.json';
+
+/** Compile a policy glob ("AWS_*", "*.corp.com") to an anchored RegExp. */
+export const policyGlob = (pat) =>
+  new RegExp(`^${String(pat).split('*').map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`, 'i');
+
+/** Load clawprint.policy.json from dir. Returns null when absent, throws on bad JSON. */
+export function loadPolicy(dir) {
+  const file = join(dir, POLICY_FILE);
+  if (!existsSync(file)) return null;
+  const policy = JSON.parse(normalizeEol(readFileSync(file, 'utf8')));
+  if (!policy || typeof policy !== 'object') throw new Error(`${POLICY_FILE}: expected a JSON object`);
+  return policy;
+}
+
+/**
+ * Evaluate a report against a policy. Rules (all optional):
+ *   network.allow  [globs] — any host NOT matching one is a violation
+ *   network.deny   [globs] — any host matching one is a violation
+ *   env.deny       [globs] — any env read matching one is a violation
+ *   commands.deny  [globs] — any command matching one is a violation
+ *   installs: false        — any runtime install is a violation
+ *   paths: false           — any write outside the project is a violation
+ *   opaque: false          — any opaque block is a violation
+ * Returns [{ itemId, kind, value, rule }] — deterministic order.
+ */
+export function evaluatePolicy(report, policy) {
+  if (!policy) return [];
+  const violations = [];
+  const denyOf = (section) => (policy[section]?.deny ?? []).map(policyGlob);
+  const allowNet = policy.network?.allow ? policy.network.allow.map(policyGlob) : null;
+  const denyNet = denyOf('network');
+  const denyEnv = denyOf('env');
+  const denyCmd = denyOf('commands');
+
+  for (const item of report.items) {
+    for (const f of item.findings) {
+      if (f.kind === 'network') {
+        if (allowNet && !allowNet.some((re) => re.test(f.value))) {
+          violations.push({ itemId: item.id, kind: f.kind, value: f.value, rule: 'network.allow (host not on allowlist)' });
+        }
+        if (denyNet.some((re) => re.test(f.value))) {
+          violations.push({ itemId: item.id, kind: f.kind, value: f.value, rule: 'network.deny' });
+        }
+      } else if (f.kind === 'env' && denyEnv.some((re) => re.test(f.value))) {
+        violations.push({ itemId: item.id, kind: f.kind, value: f.value, rule: 'env.deny' });
+      } else if (f.kind === 'commands' && denyCmd.some((re) => re.test(f.value))) {
+        violations.push({ itemId: item.id, kind: f.kind, value: f.value, rule: 'commands.deny' });
+      } else if (f.kind === 'installs' && policy.installs === false) {
+        violations.push({ itemId: item.id, kind: f.kind, value: f.value, rule: 'installs: false' });
+      } else if (f.kind === 'paths' && policy.paths === false) {
+        violations.push({ itemId: item.id, kind: f.kind, value: f.value, rule: 'paths: false' });
+      } else if (f.kind === 'opaque' && policy.opaque === false) {
+        violations.push({ itemId: item.id, kind: f.kind, value: f.value, rule: 'opaque: false' });
+      }
+    }
+  }
+  return violations.sort((a, b) => a.itemId.localeCompare(b.itemId) || a.kind.localeCompare(b.kind) || a.value.localeCompare(b.value));
+}
+
+export const renderPolicyViolations = (violations) =>
+  violations.map((v) => `! [${v.itemId}] ${v.kind}: ${v.value} — violates ${v.rule}`);
+
+// ---------------------------------------------------------------------------
+// Guard — runtime enforcement as a Claude Code PreToolUse hook.
+// Static manifest at review time; guard at run time: a Bash command about to
+// execute is checked against the committed manifest (+ policy). Fail-open by
+// design — a missing manifest warns, it never bricks a session.
+// ---------------------------------------------------------------------------
+
+/** Extract commands + hosts from one shell command string (same extractors as scan). */
+export function extractFromCommand(command) {
+  const commands = new Set();
+  const hosts = new Set();
+  for (const segment of shellSegments(String(command))) {
+    for (const tok of commandTokens(segment)) commands.add(tok);
+  }
+  const urlRe = /(?:https?|wss?|ftp):\/\/([^\s/'"<>)\]]+)/gi;
+  let m;
+  while ((m = urlRe.exec(String(command))) !== null) {
+    hosts.add(m[1].replace(/^.*@/, '').replace(/:\d+$/, '').toLowerCase());
+  }
+  return { commands: [...commands].sort(), hosts: [...hosts].sort() };
+}
+
+/** Union of manifest findings by kind → Set of values. */
+export function manifestCapabilities(report) {
+  const caps = { commands: new Set(), network: new Set(), env: new Set() };
+  for (const item of report.items ?? []) {
+    for (const f of item.findings ?? []) {
+      if (caps[f.kind]) caps[f.kind].add(f.value);
+    }
+  }
+  return caps;
+}
+
+/**
+ * Decide a PreToolUse hook event against manifest + policy.
+ * Returns { verdict: 'allow'|'warn'|'block', reasons: [] } — pure for tests.
+ * Non-Bash tools always allow (their capability story is the settings file).
+ */
+export function guardDecision(hookEvent, report, policy, { enforce = false } = {}) {
+  const tool = hookEvent?.tool_name ?? hookEvent?.toolName;
+  if (tool !== 'Bash') return { verdict: 'allow', reasons: [] };
+  const command = hookEvent?.tool_input?.command ?? '';
+  const { commands, hosts } = extractFromCommand(command);
+  const reasons = [];
+
+  if (report) {
+    const caps = manifestCapabilities(report);
+    // Commands are only checked when the manifest declares any — a config that
+    // never mentions commands makes "unknown command" pure noise. Hosts are
+    // always checked: they're the exfiltration vector and rare enough to mean
+    // something.
+    if (caps.commands.size > 0) {
+      for (const c of commands) {
+        if (!caps.commands.has(c)) reasons.push(`command not in manifest: ${c}`);
+      }
+    }
+    for (const h of hosts) {
+      if (!caps.network.has(h)) reasons.push(`host not in manifest: ${h}`);
+    }
+  }
+  if (policy) {
+    const fake = { items: [{ id: '(session)', findings: [
+      ...commands.map((value) => ({ kind: 'commands', value })),
+      ...hosts.map((value) => ({ kind: 'network', value })),
+    ] }] };
+    for (const v of evaluatePolicy(fake, policy)) reasons.push(`policy: ${v.kind} ${v.value} violates ${v.rule}`);
+  }
+
+  if (reasons.length === 0) return { verdict: 'allow', reasons };
+  return { verdict: enforce ? 'block' : 'warn', reasons };
+}
+
+// ---------------------------------------------------------------------------
+// History — capability growth over time. Opt-in and time-bearing by nature
+// (the manifests stay byte-deterministic; the history file is the one place a
+// date belongs). One JSONL line per snapshot.
+// ---------------------------------------------------------------------------
+
+export const HISTORY_FILE = '.clawprint-history.jsonl';
+
+export function historySnapshot(report, date) {
+  const byKind = Object.fromEntries(FINDING_KINDS.map((k) => [k, new Set()]));
+  for (const item of report.items) {
+    for (const f of item.findings) byKind[f.kind]?.add(f.value);
+  }
+  return {
+    date,
+    items: report.items.length,
+    ...Object.fromEntries(FINDING_KINDS.map((k) => [k, [...byKind[k]].sort()])),
+  };
+}
+
+export function renderHistoryLog(snapshots) {
+  if (snapshots.length === 0) return 'no history yet — run `clawprint --history` to start recording snapshots.\n';
+  const lines = [];
+  let prev = null;
+  for (const snap of snapshots) {
+    const counts = FINDING_KINDS.map((k) => `${k}:${(snap[k] ?? []).length}`).join('  ');
+    lines.push(`${snap.date}  items:${snap.items}  ${counts}`);
+    if (prev) {
+      for (const k of FINDING_KINDS) {
+        const before = new Set(prev[k] ?? []);
+        for (const v of snap[k] ?? []) if (!before.has(v)) lines.push(`    + ${k}: ${v}`);
+        const now = new Set(snap[k] ?? []);
+        for (const v of prev[k] ?? []) if (!now.has(v)) lines.push(`    - ${k}: ${v}`);
+      }
+    }
+    prev = snap;
+  }
+  return `${lines.join('\n')}\n`;
+}
+
+// ---------------------------------------------------------------------------
+// Fleet — one report across many repos (local directories only: offline,
+// deterministic, no API). The org-level question: "what can our agent setups
+// reach, org-wide?"
+// ---------------------------------------------------------------------------
+
+export function fleetScan(parentDir) {
+  const repos = [];
+  for (const entry of readdirSync(parentDir, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+    const dir = join(parentDir, entry.name);
+    const report = scanDir(dir);
+    if (report.items.length > 0) repos.push({ name: entry.name, report });
+  }
+  repos.sort((a, b) => a.name.localeCompare(b.name));
+
+  // value → sorted repo names, per kind — "which repos can reach this host?"
+  const byKind = Object.fromEntries(FINDING_KINDS.map((k) => [k, new Map()]));
+  for (const { name, report } of repos) {
+    for (const item of report.items) {
+      for (const f of item.findings) {
+        const m = byKind[f.kind];
+        if (!m) continue;
+        if (!m.has(f.value)) m.set(f.value, new Set());
+        m.get(f.value).add(name);
+      }
+    }
+  }
+  return { repos, byKind };
+}
+
+export function renderFleet(fleet) {
+  const lines = [`clawprint fleet: ${fleet.repos.length} repo(s) with agent config`, ''];
+  for (const { name, report } of fleet.repos) {
+    const s = summarize(report);
+    lines.push(`  ${name.padEnd(28)} items:${s.items}  commands:${s.commands}  hosts:${s.network}  env:${s.env}  installs:${s.installs}  opaque:${s.opaque}`);
+  }
+  for (const kind of ['network', 'env', 'installs', 'paths', 'opaque']) {
+    const m = fleet.byKind[kind];
+    if (m.size === 0) continue;
+    lines.push('', `  ${kind.toUpperCase()} across the fleet:`);
+    for (const value of [...m.keys()].sort()) {
+      lines.push(`    ${value}  ←  ${[...m.get(value)].sort().join(', ')}`);
+    }
+  }
+  lines.push('');
+  return lines.join('\n');
+}
+
+export function renderFleetJson(fleet) {
+  return `${JSON.stringify({
+    version: VERSION,
+    repos: fleet.repos.map(({ name, report }) => ({ name, ...summarize(report) })),
+    capabilities: Object.fromEntries(FINDING_KINDS.map((k) => [
+      k,
+      Object.fromEntries([...fleet.byKind[k].entries()].sort(([a], [b]) => a.localeCompare(b)).map(([v, repos]) => [v, [...repos].sort()])),
+    ])),
+  }, null, 2)}\n`;
+}
+
+// ---------------------------------------------------------------------------
+// Badge — a shields.io endpoint JSON generated from the manifest, so a repo
+// can wear its capability surface on the README.
+// ---------------------------------------------------------------------------
+
+export const BADGE_FILE = '.clawprint-badge.json';
+
+export function buildBadge(report) {
+  const s = summarize(report);
+  const message = `${s.network} host${s.network === 1 ? '' : 's'} · ${s.commands} cmd${s.commands === 1 ? '' : 's'} · ${s.env} env`;
+  // Orange when there's content a human can't eyeball; green otherwise.
+  const color = s.opaque > 0 ? 'orange' : 'brightgreen';
+  return { schemaVersion: 1, label: 'clawprint', message, color };
+}
+
+// ---------------------------------------------------------------------------
 // CLI
 // ---------------------------------------------------------------------------
 
@@ -1501,6 +1756,10 @@ Usage:
   npx clawprint check            rescan → compare to committed manifest → exit 0/1
   npx clawprint diff             alias of check
   npx clawprint weigh            estimated context cost (always/invoke/reference), writes nothing
+  npx clawprint guard            PreToolUse hook: check a live Bash command against the manifest
+  npx clawprint log              capability growth over time (from ${HISTORY_FILE})
+  npx clawprint fleet <dir>      scan every repo under <dir>, one org-wide capability report
+  npx clawprint badge            write ${BADGE_FILE} (shields.io endpoint) from the manifest
   npx clawprint --dir <path>     scan a different root (works with all modes)
   npx clawprint --json           print the JSON report to stdout, write nothing
   npx clawprint --sarif          print a SARIF 2.1.0 report to stdout, write nothing
@@ -1508,16 +1767,22 @@ Usage:
 
 Flags:
   --allow-content-drift          in check mode: content-only changes are a note, not a failure
+  --history                      in scan mode: also append a dated snapshot to ${HISTORY_FILE}
+  --enforce                      in guard mode: block (exit 2) instead of warn on unknown capability
   --top <n>                      in weigh mode: heaviest items to list per tier (default 5)
   --budget <n>                   in weigh mode: exit 1 if the always-loaded estimate exceeds n tokens
   --global                       in weigh mode: also weigh ~/.claude and show total tokens per session
   --brief                        in weigh mode: one-line output (for SessionStart hooks)
   --version                      print version
   --help                         print this help
+
+Policy: if ${POLICY_FILE} exists, \`check\` (and \`guard\`) also enforce it —
+network allow/deny lists, env/command deny patterns, installs/paths/opaque
+switches. Violations are ! lines and fail the check. See docs/recipes.md.
 `;
 
 function parseArgs(argv) {
-  const opts = { mode: 'scan', dir: process.cwd(), json: false, sarif: false, selftest: false, allowContentDrift: false, help: false, version: false, top: 5, budget: null, brief: false, global: false };
+  const opts = { mode: 'scan', dir: process.cwd(), json: false, sarif: false, selftest: false, allowContentDrift: false, help: false, version: false, top: 5, budget: null, brief: false, global: false, history: false, enforce: false, fleetDir: null };
   const intArg = (argv, i, flag) => {
     const v = Number.parseInt(argv[i], 10);
     if (!Number.isInteger(v) || v < 0 || String(v) !== argv[i]) throw new Error(`${flag} requires a non-negative integer`);
@@ -1527,6 +1792,16 @@ function parseArgs(argv) {
     const a = argv[i];
     if (a === 'check' || a === 'diff') opts.mode = 'check';
     else if (a === 'weigh') opts.mode = 'weigh';
+    else if (a === 'guard') opts.mode = 'guard';
+    else if (a === 'log') opts.mode = 'log';
+    else if (a === 'badge') opts.mode = 'badge';
+    else if (a === 'fleet') {
+      opts.mode = 'fleet';
+      // optional positional: the parent directory (defaults to cwd)
+      if (argv[i + 1] && !argv[i + 1].startsWith('-')) { i++; opts.fleetDir = resolve(argv[i]); }
+    }
+    else if (a === '--history') opts.history = true;
+    else if (a === '--enforce') opts.enforce = true;
     else if (a === '--top') { i++; opts.top = intArg(argv, i, '--top'); }
     else if (a === '--budget') { i++; opts.budget = intArg(argv, i, '--budget'); }
     else if (a === '--global') opts.global = true;
@@ -1577,10 +1852,83 @@ export function main(argv = process.argv.slice(2)) {
     process.stderr.write('clawprint: --brief, --budget and --global only apply to weigh mode\n');
     return 2;
   }
+  if (opts.history && opts.mode !== 'scan') {
+    process.stderr.write('clawprint: --history only applies to scan mode\n');
+    return 2;
+  }
+  if (opts.enforce && opts.mode !== 'guard') {
+    process.stderr.write('clawprint: --enforce only applies to guard mode\n');
+    return 2;
+  }
 
   if (!existsSync(opts.dir)) {
     process.stderr.write(`clawprint: directory not found: ${opts.dir}\n`);
     return 2;
+  }
+
+  if (opts.mode === 'guard') {
+    // PreToolUse hook: event JSON on stdin. Fail-open on anything unexpected —
+    // a guard that bricks sessions gets uninstalled, not fixed.
+    let event = null;
+    try {
+      const raw = readFileSync(0, 'utf8');
+      event = raw.trim() ? JSON.parse(raw) : null;
+    } catch { /* unreadable stdin → treat as no event */ }
+    if (!event) { process.stderr.write('clawprint guard: no hook event on stdin — allowing.\n'); return 0; }
+    let report = null;
+    const manifestPath = join(opts.dir, MANIFEST_JSON);
+    if (existsSync(manifestPath)) {
+      try { report = JSON.parse(readFileSync(manifestPath, 'utf8')); } catch { /* fail-open */ }
+    }
+    let policy = null;
+    try { policy = loadPolicy(opts.dir); } catch (err) { process.stderr.write(`clawprint guard: ${err.message} — ignoring policy.\n`); }
+    if (!report && !policy) {
+      process.stderr.write(`clawprint guard: no ${MANIFEST_JSON} or ${POLICY_FILE} in ${opts.dir} — allowing (run npx clawprint first).\n`);
+      return 0;
+    }
+    const { verdict, reasons } = guardDecision(event, report, policy, { enforce: opts.enforce });
+    if (verdict === 'allow') return 0;
+    for (const r of reasons) process.stderr.write(`clawprint guard: ${r}\n`);
+    if (verdict === 'block') {
+      process.stderr.write('clawprint guard: BLOCKED — this command uses capabilities outside the committed manifest/policy.\n'
+        + 'If intended: run the command manually, or rescan (npx clawprint) and commit the updated manifest.\n');
+      return 2; // PreToolUse: exit 2 blocks the tool call and shows stderr to the model
+    }
+    process.stderr.write('clawprint guard: WARN (not blocking; use --enforce to block).\n');
+    return 0;
+  }
+
+  if (opts.mode === 'log') {
+    const file = join(opts.dir, HISTORY_FILE);
+    let snapshots = [];
+    if (existsSync(file)) {
+      try {
+        snapshots = normalizeEol(readFileSync(file, 'utf8')).split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l));
+      } catch (err) {
+        process.stderr.write(`clawprint log: could not parse ${HISTORY_FILE}: ${err.message}\n`);
+        return 1;
+      }
+    }
+    process.stdout.write(renderHistoryLog(snapshots));
+    return 0;
+  }
+
+  if (opts.mode === 'fleet') {
+    const parent = opts.fleetDir ?? opts.dir;
+    if (!existsSync(parent)) { process.stderr.write(`clawprint fleet: directory not found: ${parent}\n`); return 2; }
+    const fleet = fleetScan(parent);
+    process.stdout.write(opts.json ? renderFleetJson(fleet) : renderFleet(fleet));
+    return 0;
+  }
+
+  if (opts.mode === 'badge') {
+    const badge = buildBadge(scanDir(opts.dir));
+    if (opts.json) { process.stdout.write(`${JSON.stringify(badge, null, 2)}\n`); return 0; }
+    writeFileSync(join(opts.dir, BADGE_FILE), `${JSON.stringify(badge, null, 2)}\n`);
+    process.stdout.write(`clawprint badge: wrote ${BADGE_FILE} — "${badge.message}" (${badge.color})\n`
+      + 'Serve it raw from your default branch and point shields.io at it:\n'
+      + '  ![clawprint](https://img.shields.io/endpoint?url=<raw-url-to-.clawprint-badge.json>)\n');
+    return 0;
   }
 
   if (opts.mode === 'weigh') {
@@ -1628,11 +1976,28 @@ export function main(argv = process.argv.slice(2)) {
         + `this is v${VERSION} — extractor behavior may differ; regenerate to align.\n`);
     }
     const { lines, breaking } = compareReports(oldReport, report, { allowContentDrift: opts.allowContentDrift });
-    if (lines.length === 0) {
+
+    // Policy layer: the manifest gate asks "did capabilities CHANGE?"; the
+    // policy gate asks "are any capabilities FORBIDDEN?" — both must pass.
+    let policyViolations = [];
+    try {
+      policyViolations = evaluatePolicy(report, loadPolicy(opts.dir));
+    } catch (err) {
+      process.stderr.write(`clawprint check: ${err.message}\n`);
+      return 1;
+    }
+
+    if (lines.length === 0 && policyViolations.length === 0) {
       process.stdout.write('clawprint check: no capability changes.\n');
       return 0;
     }
     for (const line of lines) process.stdout.write(`${line}\n`);
+    for (const line of renderPolicyViolations(policyViolations)) process.stdout.write(`${line}\n`);
+    if (policyViolations.length > 0) {
+      process.stdout.write(`\nclawprint check: FAIL — ${policyViolations.length} policy violation(s) (${POLICY_FILE}).\n`
+        + 'Fix the config, or change the policy deliberately and commit that diff.\n');
+      return 1;
+    }
     if (breaking) {
       process.stdout.write('\nclawprint check: FAIL — new capabilities or content drift detected.\n'
         + `If intended, regenerate the manifest (npx clawprint) and commit ${MANIFEST_MD} + ${MANIFEST_JSON}.\n`);
@@ -1655,6 +2020,10 @@ export function main(argv = process.argv.slice(2)) {
   try {
     writeFileSync(join(opts.dir, MANIFEST_MD), renderMarkdown(report));
     writeFileSync(join(opts.dir, MANIFEST_JSON), json);
+    if (opts.history) {
+      const snap = historySnapshot(report, new Date().toISOString().slice(0, 10));
+      appendFileSync(join(opts.dir, HISTORY_FILE), `${JSON.stringify(snap)}\n`);
+    }
   } catch (err) {
     process.stderr.write(`clawprint: could not write manifests: ${err.message}\n`);
     return 1;

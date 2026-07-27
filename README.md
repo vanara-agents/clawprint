@@ -119,6 +119,53 @@ Everything agent-shaped in your project — not just Claude:
 Files that are missing are fine. Files it can't read as text are still
 fingerprinted **and** flagged — nothing gets silently skipped.
 
+## Beyond the alarm: rules, live protection, and the big picture
+
+The manifest tells you what changed. Four more commands build on it:
+
+**Write house rules — `clawprint.policy.json`.** The manifest asks *"did
+anything change?"*; a policy asks *"is anything forbidden?"* Drop a small
+rules file in your repo and `check` enforces it:
+
+```json
+{
+  "network": { "allow": ["api.github.com", "*.mycorp.com"] },
+  "env": { "deny": ["AWS_*", "*_SECRET*"] },
+  "installs": false
+}
+```
+
+Translation: *"my AI setup may only talk to GitHub and our own servers, may
+never read cloud keys or secrets, and may never install software at
+runtime."* Anything that breaks a rule fails the check with a `!` line naming
+the rule — even if it was in the config all along.
+
+**Live protection — `clawprint guard`.** The check runs at review time; guard
+runs at the moment the AI is *about to execute a command*. Hook it into
+Claude Code and every shell command gets compared against the packing list
+first — a command reaching for a website that's not on the list gets flagged
+(or blocked, with `--enforce`) *before it runs*:
+
+```json
+{ "hooks": { "PreToolUse": [ { "matcher": "Bash", "hooks": [
+  { "type": "command", "command": "npx clawprint guard --enforce" }
+] } ] } }
+```
+
+It fails open by design: no manifest → it warns and allows. A guard that
+bricks your session gets uninstalled, not fixed.
+
+**The story over time — `clawprint log`.** Scan with `--history` and each
+run appends a dated snapshot. `clawprint log` then shows how your setup's
+reach has grown — *"gained 12 websites and 3 secret-reads since March, here's
+when each arrived."*
+
+**The whole org — `clawprint fleet`.** Point it at a folder of repos and get
+one report: every website, secret, and program your organization's agent
+setups can touch, and which repo can touch what. And `clawprint badge`
+writes a [shields.io](https://shields.io) badge file so a repo can wear its
+capability surface on the README.
+
 ## Also: what does your setup *cost*?
 
 Every session, your AI reads some of these instruction files before you type a
@@ -202,12 +249,22 @@ npx clawprint weigh --top 10   # list the 10 heaviest items per tier (default 5)
 npx clawprint weigh --global   # add the ~/.claude tier + total tokens per session
 npx clawprint weigh --budget N # exit 1 if the always-loaded estimate exceeds N tokens
 npx clawprint weigh --brief    # one line, made for SessionStart hooks
+npx clawprint guard            # PreToolUse hook: check a live Bash command against the manifest
+npx clawprint guard --enforce  # …and block (exit 2) instead of warn
+npx clawprint --history        # in scan mode: append a dated snapshot to .clawprint-history.jsonl
+npx clawprint log              # capability growth over time, with per-snapshot deltas
+npx clawprint fleet <dir>      # scan every repo under <dir> → one org-wide capability report
+npx clawprint badge            # write .clawprint-badge.json (shields.io endpoint schema)
 npx clawprint --dir <path>     # scan a different root (works with all modes)
 npx clawprint --json           # print the JSON report to stdout, write nothing
 npx clawprint --sarif          # print a SARIF 2.1.0 report (for the GitHub Security tab)
 npx clawprint --selftest       # run bundled fixture tests, exit 0/1
 npx clawprint check --allow-content-drift   # content-only changes become a note, not a failure
 ```
+
+The GitHub Action can also **post the capability diff as a PR comment**
+(updated in place, never duplicated) — add `comment: 'true'` to its `with:`
+block and give the job `pull-requests: write` permission.
 
 **`check` semantics** (the CI gate): a **new** capability (host, command, env
 var, tool grant, outside write, opaque block, or whole item) fails the check;
