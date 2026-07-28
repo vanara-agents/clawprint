@@ -1,5 +1,5 @@
 # Prerequisite: Node.js >= 20 must be on PATH (ubuntu-latest runners ship it;
-# otherwise add an actions/setup-node@v4 step with node-version: '20' first).
+# otherwise add an actions/setup-node@v5 step with node-version: '24' first).
 name: 'clawprint check'
 description: >-
   Fail the PR when the agent config (.claude/, .mcp.json, CLAUDE.md) gains a
